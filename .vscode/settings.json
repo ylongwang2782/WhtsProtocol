@@ -1,0 +1,15 @@
+{
+    "editor.formatOnSave": true,
+    "cmake.generator": "Ninja",
+    "cmake.saveBeforeBuild": true,
+    "cmake.buildBeforeRun": true,
+    "cmake.parallelJobs": 12,
+    "cmake.useCMakePresets": "always",
+    "files.associations": {
+        "string": "cpp",
+        "ctime": "cpp",
+        "iostream": "cpp",
+        "algorithm": "cpp",
+        "cstring": "cpp"
+    },
+}
