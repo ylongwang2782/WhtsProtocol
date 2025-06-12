@@ -4,8 +4,8 @@ project(WhtsProtocol)
 # 如果没有使用工具链文件，设置默认的C++标准和编译选项
 if(NOT CMAKE_TOOLCHAIN_FILE)
   # 设置C++标准
-  set(CMAKE_CXX_STANDARD 11)
-  set(CMAKE_CXX_STANDARD_REQUIRED ON)
+  set(CMAKE_CXX_STANDARD 14)
+  set(CMAKE_CXX_STANDARD_REQUIRED True)
 
   # 设置编译选项
   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Wextra")
