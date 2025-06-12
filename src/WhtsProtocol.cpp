@@ -1,6 +1,9 @@
 #include "WhtsProtocol.h"
 #include <cstring>
 #include <algorithm>
+#include <ctime>
+#include <chrono>
+#include <string>
 
 namespace WhtsProtocol {
 
@@ -77,7 +80,7 @@ bool Frame::deserialize(const std::vector<uint8_t>& data, Frame& frame) {
 }
 
 // ProtocolProcessor 实现
-ProtocolProcessor::ProtocolProcessor() {}
+ProtocolProcessor::ProtocolProcessor() : mtu_(DEFAULT_MTU) {}
 ProtocolProcessor::~ProtocolProcessor() {}
 
 void ProtocolProcessor::writeUint16LE(std::vector<uint8_t>& buffer, uint16_t value) {
@@ -103,10 +106,10 @@ uint32_t ProtocolProcessor::readUint32LE(const std::vector<uint8_t>& buffer, siz
            (buffer[offset + 2] << 16) | (buffer[offset + 3] << 24);
 }
 
-std::vector<uint8_t> ProtocolProcessor::packMaster2SlaveMessage(uint32_t destinationId, 
-                                                                 const Message& message,
-                                                                 uint8_t fragmentsSequence, 
-                                                                 uint8_t moreFragmentsFlag) {
+std::vector<uint8_t> ProtocolProcessor::packMaster2SlaveMessageSingle(uint32_t destinationId, 
+                                                                     const Message& message,
+                                                                     uint8_t fragmentsSequence, 
+                                                                     uint8_t moreFragmentsFlag) {
     Frame frame;
     frame.packetId = static_cast<uint8_t>(PacketId::MASTER_TO_SLAVE);
     frame.fragmentsSequence = fragmentsSequence;
@@ -126,10 +129,10 @@ std::vector<uint8_t> ProtocolProcessor::packMaster2SlaveMessage(uint32_t destina
     return frame.serialize();
 }
 
-std::vector<uint8_t> ProtocolProcessor::packSlave2MasterMessage(uint32_t slaveId, 
-                                                                 const Message& message,
-                                                                 uint8_t fragmentsSequence, 
-                                                                 uint8_t moreFragmentsFlag) {
+std::vector<uint8_t> ProtocolProcessor::packSlave2MasterMessageSingle(uint32_t slaveId, 
+                                                                     const Message& message,
+                                                                     uint8_t fragmentsSequence, 
+                                                                     uint8_t moreFragmentsFlag) {
     Frame frame;
     frame.packetId = static_cast<uint8_t>(PacketId::SLAVE_TO_MASTER);
     frame.fragmentsSequence = fragmentsSequence;
@@ -149,11 +152,11 @@ std::vector<uint8_t> ProtocolProcessor::packSlave2MasterMessage(uint32_t slaveId
     return frame.serialize();
 }
 
-std::vector<uint8_t> ProtocolProcessor::packSlave2BackendMessage(uint32_t slaveId, 
-                                                                  const DeviceStatus& deviceStatus,
-                                                                  const Message& message,
-                                                                  uint8_t fragmentsSequence, 
-                                                                  uint8_t moreFragmentsFlag) {
+std::vector<uint8_t> ProtocolProcessor::packSlave2BackendMessageSingle(uint32_t slaveId, 
+                                                                      const DeviceStatus& deviceStatus,
+                                                                      const Message& message,
+                                                                      uint8_t fragmentsSequence, 
+                                                                      uint8_t moreFragmentsFlag) {
     Frame frame;
     frame.packetId = static_cast<uint8_t>(PacketId::SLAVE_TO_BACKEND);
     frame.fragmentsSequence = fragmentsSequence;
@@ -637,5 +640,286 @@ bool ClipDataMessage::deserialize(const std::vector<uint8_t>& data) {
 }
 
 } // namespace Slave2Backend
+
+// ProtocolProcessor 分片和粘包处理功能实现
+
+// 支持自动分片的打包函数
+std::vector<std::vector<uint8_t>> ProtocolProcessor::packMaster2SlaveMessage(uint32_t destinationId, const Message& message) {
+    // 首先生成单个完整帧
+    auto completeFrame = packMaster2SlaveMessageSingle(destinationId, message, 0, 0);
+    
+    // 检查是否需要分片
+    if (completeFrame.size() <= mtu_) {
+        // 不需要分片，直接返回
+        return {completeFrame};
+    }
+    
+    // 需要分片
+    return fragmentFrame(completeFrame);
+}
+
+std::vector<std::vector<uint8_t>> ProtocolProcessor::packSlave2MasterMessage(uint32_t slaveId, const Message& message) {
+    // 首先生成单个完整帧
+    auto completeFrame = packSlave2MasterMessageSingle(slaveId, message, 0, 0);
+    
+    // 检查是否需要分片
+    if (completeFrame.size() <= mtu_) {
+        // 不需要分片，直接返回
+        return {completeFrame};
+    }
+    
+    // 需要分片
+    return fragmentFrame(completeFrame);
+}
+
+std::vector<std::vector<uint8_t>> ProtocolProcessor::packSlave2BackendMessage(uint32_t slaveId, const DeviceStatus& deviceStatus, const Message& message) {
+    // 首先生成单个完整帧
+    auto completeFrame = packSlave2BackendMessageSingle(slaveId, deviceStatus, message, 0, 0);
+    
+    // 检查是否需要分片
+    if (completeFrame.size() <= mtu_) {
+        // 不需要分片，直接返回
+        return {completeFrame};
+    }
+    
+    // 需要分片
+    return fragmentFrame(completeFrame);
+}
+
+// 分片功能实现
+std::vector<std::vector<uint8_t>> ProtocolProcessor::fragmentFrame(const std::vector<uint8_t>& frameData) {
+    std::vector<std::vector<uint8_t>> fragments;
+    
+    if (frameData.size() < 7) {  // 帧头最小7字节
+        return {frameData};
+    }
+    
+    // 解析原始帧头
+    uint8_t packetId = frameData[2];
+    
+    // 计算每个分片的有效载荷大小 (MTU - 帧头7字节)
+    size_t fragmentPayloadSize = mtu_ - 7;
+    
+    // 获取原始载荷（从第7字节开始）
+    std::vector<uint8_t> originalPayload(frameData.begin() + 7, frameData.end());
+    
+    // 计算需要多少个分片
+    uint8_t totalFragments = static_cast<uint8_t>((originalPayload.size() + fragmentPayloadSize - 1) / fragmentPayloadSize);
+    
+    // 生成每个分片
+    for (uint8_t i = 0; i < totalFragments; ++i) {
+        std::vector<uint8_t> fragment;
+        
+        // 添加帧头
+        fragment.push_back(FRAME_DELIMITER_1);
+        fragment.push_back(FRAME_DELIMITER_2);
+        fragment.push_back(packetId);
+        fragment.push_back(i);  // 分片序号
+        fragment.push_back((i == totalFragments - 1) ? 0 : 1);  // moreFragmentsFlag
+        
+        // 计算这个分片的载荷
+        size_t startPos = i * fragmentPayloadSize;
+        size_t endPos = std::min(startPos + fragmentPayloadSize, originalPayload.size());
+        size_t fragmentSize = endPos - startPos;
+        
+        // 添加长度字段
+        fragment.push_back(fragmentSize & 0xFF);
+        fragment.push_back((fragmentSize >> 8) & 0xFF);
+        
+        // 添加分片载荷
+        fragment.insert(fragment.end(), 
+                       originalPayload.begin() + startPos, 
+                       originalPayload.begin() + endPos);
+        
+        fragments.push_back(fragment);
+    }
+    
+    return fragments;
+}
+
+// 处理接收到的原始数据（支持粘包处理）
+void ProtocolProcessor::processReceivedData(const std::vector<uint8_t>& data) {
+    // 防止接收缓冲区过大
+    if (receiveBuffer_.size() + data.size() > MAX_RECEIVE_BUFFER_SIZE) {
+        // 清空缓冲区，防止内存溢出
+        receiveBuffer_.clear();
+    }
+    
+    // 将新数据添加到接收缓冲区
+    receiveBuffer_.insert(receiveBuffer_.end(), data.begin(), data.end());
+    
+    // 尝试从缓冲区中提取完整帧
+    extractCompleteFrames();
+    
+    // 清理超时的分片
+    cleanupExpiredFragments();
+}
+
+// 从接收缓冲区中提取完整帧
+bool ProtocolProcessor::extractCompleteFrames() {
+    bool foundFrames = false;
+    size_t pos = 0;
+    
+    while (pos < receiveBuffer_.size()) {
+        // 查找帧头
+        size_t frameStart = findFrameHeader(receiveBuffer_, pos);
+        if (frameStart == std::string::npos) {
+            break;  // 没有找到帧头
+        }
+        
+        // 检查是否有足够的数据读取帧长度
+        if (frameStart + 7 > receiveBuffer_.size()) {
+            break;  // 数据不够，等待更多数据
+        }
+        
+        // 读取帧长度
+        uint16_t frameLength = readUint16LE(receiveBuffer_, frameStart + 5);
+        size_t totalFrameSize = 7 + frameLength;
+        
+        // 检查是否有完整的帧
+        if (frameStart + totalFrameSize > receiveBuffer_.size()) {
+            break;  // 帧不完整，等待更多数据
+        }
+        
+        // 提取完整帧数据
+        std::vector<uint8_t> frameData(receiveBuffer_.begin() + frameStart,
+                                      receiveBuffer_.begin() + frameStart + totalFrameSize);
+        
+        // 解析帧
+        Frame frame;
+        if (Frame::deserialize(frameData, frame)) {
+            // 检查是否是分片
+            if (frame.moreFragmentsFlag || frame.fragmentsSequence > 0) {
+                // 处理分片重组
+                std::vector<uint8_t> completeFrame;
+                if (reassembleFragments(frame, completeFrame)) {
+                    // 分片重组完成，解析完整帧
+                    Frame completedFrame;
+                    if (Frame::deserialize(completeFrame, completedFrame)) {
+                        completeFrames_.push(completedFrame);
+                        foundFrames = true;
+                    }
+                }
+            } else {
+                // 单个完整帧
+                completeFrames_.push(frame);
+                foundFrames = true;
+            }
+        }
+        
+        // 移动到下一个位置
+        pos = frameStart + totalFrameSize;
+    }
+    
+    // 清理已处理的数据
+    if (pos > 0) {
+        receiveBuffer_.erase(receiveBuffer_.begin(), receiveBuffer_.begin() + pos);
+    }
+    
+    return foundFrames;
+}
+
+// 查找帧头
+size_t ProtocolProcessor::findFrameHeader(const std::vector<uint8_t>& buffer, size_t startPos) {
+    for (size_t i = startPos; i < buffer.size() - 1; ++i) {
+        if (buffer[i] == FRAME_DELIMITER_1 && buffer[i + 1] == FRAME_DELIMITER_2) {
+            return i;
+        }
+    }
+    return std::string::npos;
+}
+
+// 分片重组
+bool ProtocolProcessor::reassembleFragments(const Frame& frame, std::vector<uint8_t>& completeFrame) {
+    // 从帧载荷中提取源ID (假设载荷格式为: MessageId + SourceId + ...)
+    if (frame.payload.size() < 5) {
+        return false;  // 载荷太小
+    }
+    
+    uint32_t sourceId = readUint32LE(frame.payload, 1);  // 跳过MessageId
+    uint64_t fragmentId = generateFragmentId(frame.packetId, sourceId);
+    
+    // 查找或创建分片信息
+    auto& fragmentInfo = fragmentMap_[fragmentId];
+    fragmentInfo.packetId = frame.packetId;
+    fragmentInfo.sourceId = sourceId;
+    fragmentInfo.timestamp = 0;  // 这里应该使用实际的时间戳
+    
+    // 存储分片数据
+    fragmentInfo.fragments[frame.fragmentsSequence] = frame.payload;
+    
+    // 如果这是最后一个分片，计算总分片数
+    if (frame.moreFragmentsFlag == 0) {
+        fragmentInfo.totalFragments = frame.fragmentsSequence + 1;
+    }
+    
+    // 检查是否收集完所有分片
+    if (fragmentInfo.totalFragments > 0 && fragmentInfo.isComplete()) {
+        // 重组完整载荷
+        std::vector<uint8_t> completePayload;
+        for (uint8_t i = 0; i < fragmentInfo.totalFragments; ++i) {
+            auto it = fragmentInfo.fragments.find(i);
+            if (it != fragmentInfo.fragments.end()) {
+                completePayload.insert(completePayload.end(), 
+                                     it->second.begin(), it->second.end());
+            }
+        }
+        
+        // 构建完整帧
+        completeFrame.clear();
+        completeFrame.push_back(FRAME_DELIMITER_1);
+        completeFrame.push_back(FRAME_DELIMITER_2);
+        completeFrame.push_back(frame.packetId);
+        completeFrame.push_back(0);  // fragmentsSequence = 0
+        completeFrame.push_back(0);  // moreFragmentsFlag = 0
+        
+        // 添加载荷长度
+        uint16_t payloadLength = static_cast<uint16_t>(completePayload.size());
+        completeFrame.push_back(payloadLength & 0xFF);
+        completeFrame.push_back((payloadLength >> 8) & 0xFF);
+        
+        // 添加载荷
+        completeFrame.insert(completeFrame.end(), completePayload.begin(), completePayload.end());
+        
+        // 清理分片信息
+        fragmentMap_.erase(fragmentId);
+        
+        return true;
+    }
+    
+    return false;  // 还没有收集完所有分片
+}
+
+// 获取下一个完整帧
+bool ProtocolProcessor::getNextCompleteFrame(Frame& frame) {
+    if (completeFrames_.empty()) {
+        return false;
+    }
+    
+    frame = completeFrames_.front();
+    completeFrames_.pop();
+    return true;
+}
+
+// 清空接收缓冲区
+void ProtocolProcessor::clearReceiveBuffer() {
+    receiveBuffer_.clear();
+    while (!completeFrames_.empty()) {
+        completeFrames_.pop();
+    }
+    fragmentMap_.clear();
+}
+
+// 生成分片ID
+uint64_t ProtocolProcessor::generateFragmentId(uint8_t packetId, uint32_t sourceId) {
+    return (static_cast<uint64_t>(packetId) << 32) | sourceId;
+}
+
+// 清理超时分片
+void ProtocolProcessor::cleanupExpiredFragments() {
+    // 这里应该实现基于时间戳的超时清理
+    // 为简化实现，暂时跳过
+    // TODO: 实现基于实际时间戳的超时清理
+}
 
 } // namespace WhtsProtocol 

@@ -18,7 +18,7 @@ endif()
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 
 # 添加源文件
-set(COMMON_SRC src/udp_example.cpp src/WhtsProtocol.cpp)
+set(COMMON_SRC src/fragmentation_test.cpp src/WhtsProtocol.cpp)
 
 enable_language(C CXX)
 
