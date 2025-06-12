@@ -763,7 +763,7 @@ bool ProtocolProcessor::extractCompleteFrames() {
     while (pos < receiveBuffer_.size()) {
         // 查找帧头
         size_t frameStart = findFrameHeader(receiveBuffer_, pos);
-        if (frameStart == std::string::npos) {
+        if (frameStart == SIZE_MAX) {
             break;  // 没有找到帧头
         }
         
@@ -826,7 +826,7 @@ size_t ProtocolProcessor::findFrameHeader(const std::vector<uint8_t>& buffer, si
             return i;
         }
     }
-    return std::string::npos;
+    return SIZE_MAX;
 }
 
 // 分片重组

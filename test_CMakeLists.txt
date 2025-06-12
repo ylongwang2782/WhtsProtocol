@@ -1,0 +1,70 @@
+cmake_minimum_required(VERSION 3.10)
+project(WhtsProtocolTests)
+
+# 设置C++标准
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+# 设置编译选项
+if(MSVC)
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /W4 /WX")
+else()
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Wextra -Werror -pedantic")
+endif()
+
+# 添加调试信息
+set(CMAKE_BUILD_TYPE Debug)
+
+# 包含头文件目录
+include_directories(src)
+
+# 协议库源文件
+set(PROTOCOL_SOURCES
+    src/WhtsProtocol.cpp
+)
+
+# 创建协议库
+add_library(WhtsProtocol STATIC ${PROTOCOL_SOURCES})
+
+# 分片测试可执行文件
+add_executable(fragmentation_test 
+    src/fragmentation_test.cpp
+)
+target_link_libraries(fragmentation_test WhtsProtocol)
+
+# 完整验证测试可执行文件
+add_executable(protocol_validation 
+    src/protocol_validation.cpp
+)
+target_link_libraries(protocol_validation WhtsProtocol)
+
+# UDP示例（如果需要网络库）
+if(WIN32)
+    add_executable(udp_example 
+        src/udp_example.cpp
+    )
+    target_link_libraries(udp_example WhtsProtocol ws2_32)
+else()
+    add_executable(udp_example 
+        src/udp_example.cpp
+    )
+    target_link_libraries(udp_example WhtsProtocol)
+endif()
+
+# 添加测试目标
+enable_testing()
+
+# 添加测试用例
+add_test(NAME FragmentationTest COMMAND fragmentation_test)
+add_test(NAME ProtocolValidation COMMAND protocol_validation)
+
+# 设置测试超时时间
+set_tests_properties(FragmentationTest PROPERTIES TIMEOUT 30)
+set_tests_properties(ProtocolValidation PROPERTIES TIMEOUT 60)
+
+# 创建一个运行所有测试的自定义目标
+add_custom_target(run_all_tests
+    COMMAND ${CMAKE_CTEST_COMMAND} --verbose
+    DEPENDS fragmentation_test protocol_validation
+    COMMENT "Running all protocol tests"
+) 
