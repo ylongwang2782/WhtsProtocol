@@ -7,8 +7,23 @@
 #include <array>
 #include <map>
 #include <queue>
+#include <iostream>
+#include <sstream>
+#include <iomanip>
 
 namespace WhtsProtocol {
+
+// 日志级别
+enum class LogLevel {
+    DBG,
+    INFO,
+    WARNING,
+    ERROR
+};
+
+// 日志函数声明
+void log(LogLevel level, const std::string& message);
+std::string bytesToHexString(const std::vector<uint8_t>& data, size_t maxBytes = 16);
 
 // 协议常量
 constexpr uint8_t FRAME_DELIMITER_1 = 0xAB;
@@ -439,7 +454,7 @@ private:
     uint32_t readUint32LE(const std::vector<uint8_t>& buffer, size_t offset);
     
     // 生成分片的唯一ID
-    uint64_t generateFragmentId(uint8_t packetId, uint32_t sourceId);
+    uint64_t generateFragmentId(uint8_t packetId);
     
     // 清理超时的分片
     void cleanupExpiredFragments();

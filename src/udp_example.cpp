@@ -325,7 +325,7 @@ public:
         sockaddr_in clientAddr;
         socklen_t clientAddrLen = sizeof(clientAddr);
         
-        processor.setMTU(30);
+        processor.setMTU(14);
 
         while (true)
         {
