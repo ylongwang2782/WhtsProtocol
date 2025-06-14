@@ -11,14 +11,8 @@
 #include <sstream>
 #include <vector>
 
-
 namespace WhtsProtocol {
 
-// 日志级别
-enum class LogLevel { DBG, INFO, WARNING, ERROR };
-
-// 日志函数声明
-void log(LogLevel level, const std::string &message);
 std::string bytesToHexString(const std::vector<uint8_t> &data,
                              size_t maxBytes = 16);
 

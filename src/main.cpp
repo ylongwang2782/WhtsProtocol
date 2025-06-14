@@ -1,8 +1,8 @@
+#include "Logger.h"
 #include "WhtsProtocol.h"
 #include <algorithm>
 #include <chrono>
 #include <iomanip>
-#include <iostream>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -57,8 +57,7 @@ class UdpProtocolTester {
             throw std::runtime_error("Bind failed");
         }
 
-        std::cout << "UDP Protocol Tester listening on port " << port
-                  << std::endl;
+        Log::i("UdpTester", "UDP Protocol Tester listening on port %d", port);
     }
 
     ~UdpProtocolTester() {
@@ -95,12 +94,13 @@ class UdpProtocolTester {
     // Print the byte array
     void printBytes(const std::vector<uint8_t> &data,
                     const std::string &description) {
-        std::cout << description << " (" << data.size() << " bytes): ";
+        std::stringstream ss;
         for (auto byte : data) {
-            std::cout << std::hex << std::setw(2) << std::setfill('0')
-                      << static_cast<int>(byte) << " ";
+            ss << std::hex << std::setw(2) << std::setfill('0')
+               << static_cast<int>(byte) << " ";
         }
-        std::cout << std::dec << std::endl;
+        Log::d("UdpTester", "%s (%zu bytes): %s", description.c_str(),
+               data.size(), ss.str().c_str());
     }
 
     // Get the current timestamp
@@ -119,11 +119,9 @@ class UdpProtocolTester {
             auto syncMsg =
                 dynamic_cast<const Master2Slave::SyncMessage *>(&request);
             if (syncMsg) {
-                std::cout << "Processing sync message - Mode: "
-                          << static_cast<int>(syncMsg->mode)
-                          << ", Timestamp: " << syncMsg->timestamp << std::endl;
-                // Sync messages usually don't require a response, but we can
-                // send a status message
+                Log::i("MessageProcessor",
+                       "Processing sync message - Mode: %d, Timestamp: %u",
+                       static_cast<int>(syncMsg->mode), syncMsg->timestamp);
                 return nullptr;
             }
             break;
@@ -134,11 +132,11 @@ class UdpProtocolTester {
                 dynamic_cast<const Master2Slave::ConductionConfigMessage *>(
                     &request);
             if (configMsg) {
-                std::cout << "Processing conduction configuration - Time slot: "
-                          << static_cast<int>(configMsg->timeSlot)
-                          << ", Interval: "
-                          << static_cast<int>(configMsg->interval) << "ms"
-                          << std::endl;
+                Log::i("MessageProcessor",
+                       "Processing conduction configuration - Time slot: %d, "
+                       "Interval: %dms",
+                       static_cast<int>(configMsg->timeSlot),
+                       static_cast<int>(configMsg->interval));
 
                 auto response = std::make_unique<
                     Slave2Master::ConductionConfigResponseMessage>();
@@ -158,11 +156,11 @@ class UdpProtocolTester {
                 dynamic_cast<const Master2Slave::ResistanceConfigMessage *>(
                     &request);
             if (configMsg) {
-                std::cout << "Processing resistance configuration - Time slot: "
-                          << static_cast<int>(configMsg->timeSlot)
-                          << ", Interval: "
-                          << static_cast<int>(configMsg->interval) << "ms"
-                          << std::endl;
+                Log::i("MessageProcessor",
+                       "Processing resistance configuration - Time slot: %d, "
+                       "Interval: %dms",
+                       static_cast<int>(configMsg->timeSlot),
+                       static_cast<int>(configMsg->interval));
 
                 auto response = std::make_unique<
                     Slave2Master::ResistanceConfigResponseMessage>();
@@ -181,10 +179,11 @@ class UdpProtocolTester {
             auto configMsg =
                 dynamic_cast<const Master2Slave::ClipConfigMessage *>(&request);
             if (configMsg) {
-                std::cout << "Processing clip configuration - Interval: "
-                          << static_cast<int>(configMsg->interval)
-                          << "ms, Mode: " << static_cast<int>(configMsg->mode)
-                          << std::endl;
+                Log::i(
+                    "MessageProcessor",
+                    "Processing clip configuration - Interval: %dms, Mode: %d",
+                    static_cast<int>(configMsg->interval),
+                    static_cast<int>(configMsg->mode));
 
                 auto response =
                     std::make_unique<Slave2Master::ClipConfigResponseMessage>();
@@ -201,9 +200,10 @@ class UdpProtocolTester {
             auto pingMsg =
                 dynamic_cast<const Master2Slave::PingReqMessage *>(&request);
             if (pingMsg) {
-                std::cout << "Processing Ping request - Sequence number: "
-                          << pingMsg->sequenceNumber
-                          << ", Timestamp: " << pingMsg->timestamp << std::endl;
+                Log::i("MessageProcessor",
+                       "Processing Ping request - Sequence number: %d, "
+                       "Timestamp: %u",
+                       pingMsg->sequenceNumber, pingMsg->timestamp);
 
                 auto response =
                     std::make_unique<Slave2Master::PingRspMessage>();
@@ -218,8 +218,9 @@ class UdpProtocolTester {
             auto rstMsg =
                 dynamic_cast<const Master2Slave::RstMessage *>(&request);
             if (rstMsg) {
-                std::cout << "Processing reset message - Lock status: "
-                          << static_cast<int>(rstMsg->lockStatus) << std::endl;
+                Log::i("MessageProcessor",
+                       "Processing reset message - Lock status: %d",
+                       static_cast<int>(rstMsg->lockStatus));
 
                 auto response =
                     std::make_unique<Slave2Master::RstResponseMessage>();
@@ -236,8 +237,9 @@ class UdpProtocolTester {
                 dynamic_cast<const Master2Slave::ShortIdAssignMessage *>(
                     &request);
             if (assignMsg) {
-                std::cout << "Processing short ID assignment - Short ID: "
-                          << static_cast<int>(assignMsg->shortId) << std::endl;
+                Log::i("MessageProcessor",
+                       "Processing short ID assignment - Short ID: %d",
+                       static_cast<int>(assignMsg->shortId));
 
                 auto response =
                     std::make_unique<Slave2Master::ShortIdConfirmMessage>();
@@ -249,9 +251,8 @@ class UdpProtocolTester {
         }
 
         default:
-            std::cout << "Unknown message type: 0x" << std::hex
-                      << static_cast<int>(request.getMessageId()) << std::dec
-                      << std::endl;
+            Log::w("MessageProcessor", "Unknown message type: 0x%02X",
+                   static_cast<int>(request.getMessageId()));
             break;
         }
 
@@ -261,75 +262,73 @@ class UdpProtocolTester {
     // Process the received data
     void processFrame(Frame &frame, const sockaddr_in &clientAddr) {
 
-        std::cout << "Frame parsed successfully:" << std::endl;
-        std::cout << "Packet type: 0x" << std::hex
-                  << static_cast<int>(frame.packetId) << std::dec << std::endl;
-        std::cout << "Fragment sequence: "
-                  << static_cast<int>(frame.fragmentsSequence) << std::endl;
-        std::cout << "More fragments: "
-                  << static_cast<int>(frame.moreFragmentsFlag) << std::endl;
-        std::cout << "Payload length: " << frame.packetLength << std::endl;
+        Log::i("FrameProcessor", "Frame parsed successfully:");
+        Log::i("FrameProcessor", "Packet type: 0x%02X",
+               static_cast<int>(frame.packetId));
+        Log::i("FrameProcessor", "Fragment sequence: %d",
+               static_cast<int>(frame.fragmentsSequence));
+        Log::i("FrameProcessor", "More fragments: %d",
+               static_cast<int>(frame.moreFragmentsFlag));
+        Log::i("FrameProcessor", "Payload length: %d", frame.packetLength);
 
-        // 根据包类型处理
+        // Process by packet type
         if (frame.packetId == static_cast<uint8_t>(PacketId::MASTER_TO_SLAVE)) {
             uint32_t destinationId;
             std::unique_ptr<Message> message;
 
             if (processor.parseMaster2SlavePacket(frame.payload, destinationId,
                                                   message)) {
-                std::cout << "Master2Slave packet parsed successfully:"
-                          << std::endl;
-                std::cout << "Destination ID: 0x" << std::hex << destinationId
-                          << std::dec << std::endl;
-                std::cout << "Message ID: 0x" << std::hex
-                          << static_cast<int>(message->getMessageId())
-                          << std::dec << std::endl;
+                Log::i("PacketProcessor",
+                       "Master2Slave packet parsed successfully:");
+                Log::i("PacketProcessor", "Destination ID: 0x%08X",
+                       destinationId);
+                Log::i("PacketProcessor", "Message ID: 0x%02X",
+                       static_cast<int>(message->getMessageId()));
 
-                // 模拟从机ID
+                // Simulate slave ID
                 uint32_t slaveId = 0x12345678;
 
-                // 处理消息并生成响应
+                // Process message and generate response
                 auto response = processAndCreateResponse(slaveId, *message);
 
                 if (response) {
-                    // 打包响应消息
+                    // Pack response message
                     auto responseData =
                         processor.packSlave2MasterMessage(slaveId, *response);
 
-                    std::cout << "Sending response:" << std::endl;
+                    Log::i("ResponseSender", "Sending response:");
 
-                    // 发送所有分片
+                    // Send all fragments
                     for (const auto &fragment : responseData) {
                         printBytes(fragment, "Response data");
-                        // 发送响应
+                        // Send response
                         sendto(sock,
                                reinterpret_cast<const char *>(fragment.data()),
                                static_cast<int>(fragment.size()), 0,
                                (sockaddr *)&clientAddr, sizeof(clientAddr));
                     }
 
-                    std::cout << "Response sent" << std::endl;
+                    Log::i("ResponseSender", "Response sent");
                 } else {
-                    std::cout << "No response needed for this message"
-                              << std::endl;
+                    Log::i("ResponseSender",
+                           "No response needed for this message");
                 }
             } else {
-                std::cout << "Failed to parse Master2Slave packet" << std::endl;
+                Log::e("PacketProcessor",
+                       "Failed to parse Master2Slave packet");
             }
         } else {
-            std::cout << "Unsupported packet type: 0x" << std::hex
-                      << static_cast<int>(frame.packetId) << std::dec
-                      << std::endl;
+            Log::w("PacketProcessor", "Unsupported packet type: 0x%02X",
+                   static_cast<int>(frame.packetId));
         }
     }
 
     // Main loop
     void run() {
-        std::cout << "Protocol tester started, waiting for UDP messages..."
-                  << std::endl;
-        std::cout << "Tip: Send hexadecimal data to localhost:" << port
-                  << std::endl;
-        std::cout << "Press Ctrl+C to exit\n" << std::endl;
+        Log::i("UdpTester",
+               "Protocol tester started, waiting for UDP messages...");
+        Log::i("UdpTester", "Tip: Send hexadecimal data to localhost:%d", port);
+        Log::i("UdpTester", "Press Ctrl+C to exit");
 
         char buffer[1024];
         sockaddr_in clientAddr;
@@ -359,12 +358,12 @@ class UdpProtocolTester {
                     std::all_of(receivedStr.begin(), receivedStr.end(),
                                 [](char c) { return std::isxdigit(c); })) {
                     data = hexStringToBytes(receivedStr);
-                    std::cout << "Received hexadecimal string: " << receivedStr
-                              << std::endl;
+                    Log::i("DataReceiver", "Received hexadecimal string: %s",
+                           receivedStr.c_str());
                 } else {
                     // Otherwise, treat it as binary data directly
                     data.assign(buffer, buffer + bytesReceived);
-                    std::cout << "Received binary data" << std::endl;
+                    Log::i("DataReceiver", "Received binary data");
                 }
 
                 if (!data.empty()) {
@@ -374,11 +373,10 @@ class UdpProtocolTester {
                     int frameCount = 0;
                     while (processor.getNextCompleteFrame(receivedFrame)) {
                         frameCount++;
-                        std::cout
-                            << "解析出帧 " << frameCount << ": "
-                            << "PacketId=" << (int)receivedFrame.packetId
-                            << ", 载荷大小=" << receivedFrame.payload.size()
-                            << std::endl;
+                        Log::i("FrameParser",
+                               "Parsed frame %d: PacketId=%d, payload size=%zu",
+                               frameCount, (int)receivedFrame.packetId,
+                               receivedFrame.payload.size());
                         processFrame(receivedFrame, clientAddr);
                     }
                 }
@@ -388,14 +386,14 @@ class UdpProtocolTester {
 };
 
 int main() {
-    std::cout << "WhtsProtocol UDP tester" << std::endl;
-    std::cout << "======================" << std::endl;
+    Log::i("Main", "WhtsProtocol UDP tester");
+    Log::i("Main", "======================");
 
     try {
         UdpProtocolTester tester(8888);
         tester.run();
     } catch (const std::exception &e) {
-        std::cerr << "error: " << e.what() << std::endl;
+        Log::e("Main", "Error: %s", e.what());
         return 1;
     }
 
