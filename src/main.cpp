@@ -196,6 +196,54 @@ class UdpProtocolTester {
             break;
         }
 
+        case static_cast<uint8_t>(Master2SlaveMessageId::READ_COND_DATA_MSG): {
+            auto readCondDataMsg =
+                dynamic_cast<const Master2Slave::ReadConductionDataMessage *>(
+                    &request);
+            if (readCondDataMsg) {
+                Log::i("MessageProcessor", "Processing read conduction data");
+
+                auto response =
+                    std::make_unique<Slave2Backend::ConductionDataMessage>();
+                response->conductionLength = 1;
+                response->conductionData = {0x90};
+                return std::move(response);
+            }
+
+            break;
+        }
+
+        case static_cast<uint8_t>(Master2SlaveMessageId::READ_RES_DATA_MSG): {
+            auto readCondDataMsg =
+                dynamic_cast<const Master2Slave::ReadResistanceDataMessage *>(
+                    &request);
+            if (readCondDataMsg) {
+                Log::i("MessageProcessor", "Processing read conduction data");
+
+                auto response =
+                    std::make_unique<Slave2Backend::ResistanceDataMessage>();
+                response->resistanceLength = 1;
+                response->resistanceData = {0x90};
+                return std::move(response);
+            }
+            break;
+        }
+
+        case static_cast<uint8_t>(Master2SlaveMessageId::READ_CLIP_DATA_MSG): {
+            auto readCondDataMsg =
+                dynamic_cast<const Master2Slave::ReadClipDataMessage *>(
+                    &request);
+            if (readCondDataMsg) {
+                Log::i("MessageProcessor", "Processing read conduction data");
+
+                auto response =
+                    std::make_unique<Slave2Backend::ClipDataMessage>();
+                response->clipData = 0xFF;
+                return std::move(response);
+            }
+            break;
+        }
+
         case static_cast<uint8_t>(Master2SlaveMessageId::PING_REQ_MSG): {
             auto pingMsg =
                 dynamic_cast<const Master2Slave::PingReqMessage *>(&request);
@@ -334,7 +382,7 @@ class UdpProtocolTester {
         sockaddr_in clientAddr;
         socklen_t clientAddrLen = sizeof(clientAddr);
 
-        processor.setMTU(14);
+        processor.setMTU(100);
 
         while (true) {
             int bytesReceived =
@@ -374,7 +422,8 @@ class UdpProtocolTester {
                     while (processor.getNextCompleteFrame(receivedFrame)) {
                         frameCount++;
                         Log::i("FrameParser",
-                               "Parsed frame %d: PacketId=%d, payload size=%zu",
+                               "Parsed frame %d: PacketId=%d, payload "
+                               "size=%zu",
                                frameCount, (int)receivedFrame.packetId,
                                receivedFrame.payload.size());
                         processFrame(receivedFrame, clientAddr);
