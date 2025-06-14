@@ -19,5 +19,8 @@
     ],
     "files.associations": {
         "iostream": "cpp"
-    }
+    },
+    "editor.defaultFormatter": "llvm-vs-code-extensions.vscode-clangd",
+    "editor.formatOnSave": true,
+    "C_Cpp.formatting": "clangFormat"
 }
