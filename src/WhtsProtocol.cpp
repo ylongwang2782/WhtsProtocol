@@ -1,4 +1,5 @@
 #include "WhtsProtocol.h"
+#include "Logger.h"
 #include <algorithm>
 #include <chrono>
 #include <cstring>
@@ -9,6 +10,23 @@
 #include <string>
 
 namespace WhtsProtocol {
+
+// Helper function to convert bytes to hex string
+std::string bytesToHexString(const std::vector<uint8_t> &data,
+                             size_t maxBytes) {
+    std::stringstream ss;
+    size_t count = std::min(data.size(), maxBytes);
+    for (size_t i = 0; i < count; ++i) {
+        ss << std::hex << std::setw(2) << std::setfill('0')
+           << static_cast<int>(data[i]);
+        if (i < count - 1)
+            ss << " ";
+    }
+    if (data.size() > maxBytes) {
+        ss << "...";
+    }
+    return ss.str();
+}
 
 uint16_t DeviceStatus::toUint16() const {
     uint16_t result = 0;
@@ -752,147 +770,154 @@ std::vector<std::vector<uint8_t>>
 ProtocolProcessor::fragmentFrame(const std::vector<uint8_t> &frameData) {
     std::vector<std::vector<uint8_t>> fragments;
 
-    log(LogLevel::INFO,
-        "开始分片处理，原始帧大小: " + std::to_string(frameData.size()) +
-            " 字节，MTU: " + std::to_string(mtu_));
+    Log::i("ProtocolProcessor",
+           "Starting frame fragmentation, original frame size: %zu bytes, MTU: "
+           "%zu",
+           frameData.size(), mtu_);
 
-    if (frameData.size() < 7) { // 帧头最小7字节
-        log(LogLevel::WARNING, "帧数据太小，无需分片: " +
-                                   std::to_string(frameData.size()) + " 字节");
+    if (frameData.size() < 7) { // Minimum frame header is 7 bytes
+        Log::w("ProtocolProcessor",
+               "Frame data too small for fragmentation: %zu bytes",
+               frameData.size());
         return {frameData};
     }
 
-    // 解析原始帧头
+    // Parse original frame header
     uint8_t packetId = frameData[2];
-    log(LogLevel::DBG, "原始帧 PacketId: 0x" + std::to_string(packetId));
+    Log::d("ProtocolProcessor", "Original frame PacketId: 0x%02X", packetId);
 
-    // 计算每个分片的有效载荷大小 (MTU - 帧头7字节)
+    // Calculate effective payload size per fragment (MTU - 7 bytes frame
+    // header)
     size_t fragmentPayloadSize = mtu_ - 7;
-    log(LogLevel::DBG, "每个分片的最大有效载荷大小: " +
-                           std::to_string(fragmentPayloadSize) + " 字节");
+    Log::d("ProtocolProcessor", "Maximum payload size per fragment: %zu bytes",
+           fragmentPayloadSize);
 
-    // 获取原始载荷（从第7字节开始）
+    // Get original payload (starting from 7th byte)
     std::vector<uint8_t> originalPayload(frameData.begin() + 7,
                                          frameData.end());
-    log(LogLevel::DBG,
-        "原始载荷大小: " + std::to_string(originalPayload.size()) + " 字节");
+    Log::d("ProtocolProcessor", "Original payload size: %zu bytes",
+           originalPayload.size());
 
-    // 计算需要多少个分片
+    // Calculate how many fragments are needed
     uint8_t totalFragments = static_cast<uint8_t>(
         (originalPayload.size() + fragmentPayloadSize - 1) /
         fragmentPayloadSize);
-    log(LogLevel::INFO, "需要分片数量: " + std::to_string(totalFragments));
+    Log::i("ProtocolProcessor", "Total fragments needed: %d", totalFragments);
 
-    // 生成每个分片
+    // Generate each fragment
     for (uint8_t i = 0; i < totalFragments; ++i) {
         std::vector<uint8_t> fragment;
 
-        // 添加帧头
+        // Add frame header
         fragment.push_back(FRAME_DELIMITER_1);
         fragment.push_back(FRAME_DELIMITER_2);
         fragment.push_back(packetId);
-        fragment.push_back(i); // 分片序号
+        fragment.push_back(i); // Fragment sequence number
         fragment.push_back((i == totalFragments - 1) ? 0
                                                      : 1); // moreFragmentsFlag
 
-        // 计算这个分片的载荷
+        // Calculate payload for this fragment
         size_t startPos = i * fragmentPayloadSize;
         size_t endPos =
             std::min(startPos + fragmentPayloadSize, originalPayload.size());
         size_t fragmentSize = endPos - startPos;
 
-        // 添加长度字段
+        // Add length field
         fragment.push_back(fragmentSize & 0xFF);
         fragment.push_back((fragmentSize >> 8) & 0xFF);
 
-        // 添加分片载荷
+        // Add fragment payload
         fragment.insert(fragment.end(), originalPayload.begin() + startPos,
                         originalPayload.begin() + endPos);
 
-        log(LogLevel::DBG,
-            "分片 #" + std::to_string(i) + "/" +
-                std::to_string(totalFragments - 1) +
-                ", 序号=" + std::to_string(i) + ", 更多分片标志=" +
-                std::to_string((i == totalFragments - 1) ? 0 : 1) +
-                ", 分片大小=" + std::to_string(fragment.size()) +
-                ", 载荷大小=" + std::to_string(fragmentSize));
+        Log::d("ProtocolProcessor",
+               "Fragment #%d/%d, sequence=%d, more_fragments=%d, "
+               "fragment_size=%zu, payload_size=%zu",
+               i, totalFragments - 1, i, (i == totalFragments - 1) ? 0 : 1,
+               fragment.size(), fragmentSize);
 
         fragments.push_back(fragment);
     }
 
-    log(LogLevel::INFO,
-        "分片完成，共生成 " + std::to_string(fragments.size()) + " 个分片");
+    Log::i("ProtocolProcessor",
+           "Fragmentation completed, generated %zu fragments",
+           fragments.size());
     return fragments;
 }
 
-// 处理接收到的原始数据（支持粘包处理）
+// Process received raw data (supports packet concatenation handling)
 void ProtocolProcessor::processReceivedData(const std::vector<uint8_t> &data) {
-    log(LogLevel::INFO, "接收新数据，大小: " + std::to_string(data.size()) +
-                            " 字节，前缀: " + bytesToHexString(data, 8));
+    Log::i("ProtocolProcessor",
+           "Received new data, size: %zu bytes, prefix: %s", data.size(),
+           bytesToHexString(data, 8).c_str());
 
-    // 防止接收缓冲区过大
+    // Prevent receive buffer from becoming too large
     if (receiveBuffer_.size() + data.size() > MAX_RECEIVE_BUFFER_SIZE) {
-        log(LogLevel::WARNING,
-            "接收缓冲区将超出最大限制，清空缓冲区。当前大小: " +
-                std::to_string(receiveBuffer_.size()) +
-                "，新数据大小: " + std::to_string(data.size()) +
-                "，最大限制: " + std::to_string(MAX_RECEIVE_BUFFER_SIZE));
-        // 清空缓冲区，防止内存溢出
+        Log::w("ProtocolProcessor",
+               "Receive buffer will exceed maximum limit, clearing buffer. "
+               "Current size: %zu, new data size: %zu, max limit: %zu",
+               receiveBuffer_.size(), data.size(), MAX_RECEIVE_BUFFER_SIZE);
+        // Clear buffer to prevent memory overflow
         receiveBuffer_.clear();
     }
 
-    // 将新数据添加到接收缓冲区
+    // Add new data to receive buffer
     receiveBuffer_.insert(receiveBuffer_.end(), data.begin(), data.end());
-    log(LogLevel::DBG, "接收缓冲区当前大小: " +
-                           std::to_string(receiveBuffer_.size()) + " 字节");
+    Log::d("ProtocolProcessor", "Current receive buffer size: %zu bytes",
+           receiveBuffer_.size());
 
-    // 尝试从缓冲区中提取完整帧
+    // Try to extract complete frames from buffer
     bool framesExtracted = extractCompleteFrames();
-    log(LogLevel::DBG,
-        "提取完整帧结果: " +
-            std::string(framesExtracted ? "找到帧" : "未找到帧"));
+    Log::d("ProtocolProcessor", "Frame extraction result: %s",
+           framesExtracted ? "frames found" : "no frames found");
 
-    // 清理超时的分片
+    // Clean up expired fragments
     cleanupExpiredFragments();
 }
 
-// 从接收缓冲区中提取完整帧
+// Extract complete frames from receive buffer
 bool ProtocolProcessor::extractCompleteFrames() {
     bool foundFrames = false;
     size_t pos = 0;
 
-    log(LogLevel::DBG, "开始从接收缓冲区提取完整帧，缓冲区大小: " +
-                           std::to_string(receiveBuffer_.size()) + " 字节");
+    Log::d(
+        "ProtocolProcessor",
+        "Starting frame extraction from receive buffer, buffer size: %zu bytes",
+        receiveBuffer_.size());
 
     while (pos < receiveBuffer_.size()) {
-        // 查找帧头
+        // Find frame header
         size_t frameStart = findFrameHeader(receiveBuffer_, pos);
         if (frameStart == SIZE_MAX) {
-            log(LogLevel::DBG, "未找到帧头，跳过当前数据");
-            break; // 没有找到帧头
+            Log::d("ProtocolProcessor",
+                   "No frame header found, skipping current data");
+            break; // No frame header found
         }
 
-        log(LogLevel::DBG, "找到帧头，位置: " + std::to_string(frameStart));
+        Log::d("ProtocolProcessor", "Frame header found at position: %zu",
+               frameStart);
 
-        // 检查是否有足够的数据读取帧长度
+        // Check if there's enough data to read frame length
         if (frameStart + 7 > receiveBuffer_.size()) {
-            log(LogLevel::DBG, "数据不足以读取帧长度，等待更多数据");
-            break; // 数据不够，等待更多数据
+            Log::d("ProtocolProcessor", "Insufficient data to read frame "
+                                        "length, waiting for more data");
+            break; // Not enough data, wait for more
         }
 
         // 读取帧长度
         uint16_t frameLength = readUint16LE(receiveBuffer_, frameStart + 5);
         size_t totalFrameSize = 7 + frameLength;
 
-        log(LogLevel::DBG, "帧载荷长度: " + std::to_string(frameLength) +
-                               "，总帧大小: " + std::to_string(totalFrameSize));
+        Log::d("ProtocolProcessor",
+               "Frame payload length: %d, total frame size: %zu", frameLength,
+               totalFrameSize);
 
         // 检查是否有完整的帧
         if (frameStart + totalFrameSize > receiveBuffer_.size()) {
-            log(LogLevel::DBG,
-                "帧不完整，等待更多数据。需要: " +
-                    std::to_string(frameStart + totalFrameSize) +
-                    "，当前有: " + std::to_string(receiveBuffer_.size()));
+            Log::d(
+                "ProtocolProcessor",
+                "Incomplete frame, waiting for more data. Need: %zu, have: %zu",
+                frameStart + totalFrameSize, receiveBuffer_.size());
             break; // 帧不完整，等待更多数据
         }
 
@@ -901,65 +926,72 @@ bool ProtocolProcessor::extractCompleteFrames() {
                                        receiveBuffer_.begin() + frameStart +
                                            totalFrameSize);
 
-        log(LogLevel::INFO,
-            "提取到完整帧数据，大小: " + std::to_string(frameData.size()) +
-                " 字节，帧数据前缀: " + bytesToHexString(frameData, 16));
+        Log::i(
+            "ProtocolProcessor",
+            "Extracted complete frame data, size: %zu bytes, frame prefix: %s",
+            frameData.size(), bytesToHexString(frameData, 16).c_str());
 
         // 解析帧
         Frame frame;
         if (Frame::deserialize(frameData, frame)) {
-            log(LogLevel::INFO,
-                "帧解析成功，PacketId: 0x" + std::to_string(frame.packetId) +
-                    ", 分片序号: " + std::to_string(frame.fragmentsSequence) +
-                    ", 更多分片标志: " +
-                    std::to_string(frame.moreFragmentsFlag) +
-                    ", 载荷长度: " + std::to_string(frame.packetLength));
+            Log::i(
+                "ProtocolProcessor",
+                "Frame parsed successfully, PacketId: 0x%02X, "
+                "fragment_sequence: %d, more_fragments: %d, payload_length: %d",
+                frame.packetId, frame.fragmentsSequence,
+                frame.moreFragmentsFlag, frame.packetLength);
 
             // 检查是否是分片
             if (frame.moreFragmentsFlag || frame.fragmentsSequence > 0) {
-                log(LogLevel::INFO, "检测到分片帧，开始处理分片重组");
+                Log::i("ProtocolProcessor",
+                       "Fragment frame detected, starting fragment reassembly");
                 // 处理分片重组
                 std::vector<uint8_t> completeFrame;
                 if (reassembleFragments(frame, completeFrame)) {
-                    log(LogLevel::INFO,
-                        "分片重组完成，重组后帧大小: " +
-                            std::to_string(completeFrame.size()) + " 字节");
+                    Log::i("ProtocolProcessor",
+                           "Fragment reassembly completed, reassembled frame "
+                           "size: %zu bytes",
+                           completeFrame.size());
                     // 分片重组完成，解析完整帧
                     Frame completedFrame;
                     if (Frame::deserialize(completeFrame, completedFrame)) {
-                        log(LogLevel::INFO,
-                            "重组后帧解析成功，PacketId: 0x" +
-                                std::to_string(completedFrame.packetId) +
-                                ", 载荷长度: " +
-                                std::to_string(completedFrame.packetLength));
+                        Log::i("ProtocolProcessor",
+                               "Reassembled frame parsed successfully, "
+                               "PacketId: 0x%02X, payload_length: %d",
+                               completedFrame.packetId,
+                               completedFrame.packetLength);
                         completeFrames_.push(completedFrame);
                         foundFrames = true;
                     } else {
-                        log(LogLevel::ERROR, "重组后帧解析失败");
+                        Log::e("ProtocolProcessor",
+                               "Failed to parse reassembled frame");
                     }
                 } else {
-                    log(LogLevel::DBG, "分片重组未完成，等待更多分片");
+                    Log::d("ProtocolProcessor",
+                           "Fragment reassembly not complete, waiting for more "
+                           "fragments");
                 }
             } else {
-                log(LogLevel::INFO, "单个完整帧，直接加入完整帧队列");
+                Log::i("ProtocolProcessor",
+                       "Single complete frame, adding to complete frame queue");
                 // 单个完整帧
                 completeFrames_.push(frame);
                 foundFrames = true;
             }
         } else {
-            log(LogLevel::ERROR, "帧解析失败");
+            Log::e("ProtocolProcessor", "Frame parsing failed");
         }
 
         // 移动到下一个位置
         pos = frameStart + totalFrameSize;
-        log(LogLevel::DBG, "移动到下一个位置: " + std::to_string(pos));
+        Log::d("ProtocolProcessor", "Moving to next position: %zu", pos);
     }
 
     // 清理已处理的数据
     if (pos > 0) {
-        log(LogLevel::DBG,
-            "清理已处理的数据，从 0 到 " + std::to_string(pos) + "，剩余 " +
-                std::to_string(receiveBuffer_.size() - pos) + " 字节");
+        Log::d("ProtocolProcessor",
+               "Cleaning processed data, from 0 to %zu, remaining %zu bytes",
+               pos, receiveBuffer_.size() - pos);
         receiveBuffer_.erase(receiveBuffer_.begin(),
                              receiveBuffer_.begin() + pos);
     }
@@ -982,14 +1014,17 @@ size_t ProtocolProcessor::findFrameHeader(const std::vector<uint8_t> &buffer,
 // 分片重组
 bool ProtocolProcessor::reassembleFragments(
     const Frame &frame, std::vector<uint8_t> &completeFrame) {
-    log(LogLevel::INFO,
-        "开始分片重组，分片序号: " + std::to_string(frame.fragmentsSequence) +
-            ", 更多分片标志: " + std::to_string(frame.moreFragmentsFlag));
+    Log::i("ProtocolProcessor",
+           "Starting fragment reassembly, fragment_sequence: %d, "
+           "more_fragments: %d",
+           frame.fragmentsSequence, frame.moreFragmentsFlag);
 
     // 从帧载荷中提取源ID (假设载荷格式为: MessageId + SourceId + ...)
     if (frame.payload.size() < 5) {
-        log(LogLevel::ERROR, "分片载荷太小，无法提取源ID，载荷大小: " +
-                                 std::to_string(frame.payload.size()));
+        Log::e("ProtocolProcessor",
+               "Fragment payload too small to extract source ID, payload size: "
+               "%zu",
+               frame.payload.size());
         return false; // 载荷太小
     }
 
@@ -997,10 +1032,10 @@ bool ProtocolProcessor::reassembleFragments(
     uint32_t sourceId = readUint32LE(frame.payload, 1); // 跳过MessageId
     uint64_t fragmentId = generateFragmentId(frame.packetId);
 
-    log(LogLevel::DBG, "分片信息 - MessageId: 0x" + std::to_string(messageId) +
-                           ", SourceId: 0x" + std::to_string(sourceId) +
-                           ", 生成的FragmentId: 0x" +
-                           std::to_string(fragmentId));
+    Log::d("ProtocolProcessor",
+           "Fragment info - MessageId: 0x%02X, SourceId: 0x%08X, generated "
+           "FragmentId: 0x%016llX",
+           messageId, sourceId, fragmentId);
 
     // 查找或创建分片信息
     auto &fragmentInfo = fragmentMap_[fragmentId];
@@ -1012,74 +1047,61 @@ bool ProtocolProcessor::reassembleFragments(
 
     // 存储分片数据
     fragmentInfo.fragments[frame.fragmentsSequence] = frame.payload;
-    log(LogLevel::DBG,
-        "存储分片数据，序号: " + std::to_string(frame.fragmentsSequence) +
-            ", 载荷大小: " + std::to_string(frame.payload.size()) +
-            ", 当前已收集分片数: " +
-            std::to_string(fragmentInfo.fragments.size()));
+    Log::d("ProtocolProcessor",
+           "Storing fragment data, sequence: %d, payload size: %zu, collected "
+           "fragments: %zu",
+           frame.fragmentsSequence, frame.payload.size(),
+           fragmentInfo.fragments.size());
 
     // 如果这是最后一个分片，计算总分片数
     if (frame.moreFragmentsFlag == 0) {
         fragmentInfo.totalFragments = frame.fragmentsSequence + 1;
-        log(LogLevel::INFO, "收到最后一个分片，总分片数设置为: " +
-                                std::to_string(fragmentInfo.totalFragments));
+        Log::i("ProtocolProcessor",
+               "Received last fragment, total fragments set to: %d",
+               fragmentInfo.totalFragments);
     }
 
     // 检查是否收集完所有分片
     if (fragmentInfo.totalFragments > 0 && fragmentInfo.isComplete()) {
-        log(LogLevel::INFO, "所有分片已收集完成，开始重组完整帧，总分片数: " +
-                                std::to_string(fragmentInfo.totalFragments));
+        Log::i("ProtocolProcessor",
+               "All fragments collected, starting complete frame reassembly, "
+               "total fragments: %d",
+               fragmentInfo.totalFragments);
 
         // 重组完整载荷
         std::vector<uint8_t> completePayload;
 
         // 检查一下分片顺序是否正确
-        std::string fragmentOrder = "分片顺序: ";
+        std::string fragmentOrder = "Fragment order: ";
         for (const auto &entry : fragmentInfo.fragments) {
             fragmentOrder += std::to_string(entry.first) + " ";
         }
-        log(LogLevel::DBG, fragmentOrder);
+        Log::d("ProtocolProcessor", "%s", fragmentOrder.c_str());
 
-        // // 在重组前检查是否有重复的MessageId，这可能是一个问题
-        // std::map<uint8_t, std::vector<uint8_t>> messageIdMap;
-        // for (const auto& entry : fragmentInfo.fragments) {
-        //     if (!entry.second.empty()) {
-        //         uint8_t msgId = entry.second[0];
-        //         messageIdMap[msgId].push_back(entry.first);
-        //     }
-        // }
+        // Check for duplicate MessageIds before reassembly (this could be an
+        // issue) This code is commented out as it's for debugging purposes only
 
-        // if (messageIdMap.size() > 1) {
-        //     std::string msgIdInfo = "警告：检测到多个不同的MessageId: ";
-        //     for (const auto& entry : messageIdMap) {
-        //         msgIdInfo += "0x" + std::to_string(entry.first) + "(分片:";
-        //         for (uint8_t seq : entry.second) {
-        //             msgIdInfo += std::to_string(seq) + ",";
-        //         }
-        //         msgIdInfo += ") ";
-        //     }
-        //     log(LogLevel::WARNING, msgIdInfo);
-        // }
+        // Fix: Don't duplicate header information (MessageId + SourceId) for
+        // each fragment Only keep complete payload in the first fragment
+        // (sequence 0) Subsequent fragments only keep the data portion
 
-        // 修复：不要重复添加每个分片的头部信息（MessageId +
-        // SourceId），只在第一个分片中保留
-        // 第一个分片（序号0）保留完整载荷，后续分片只保留数据部分
-
-        // 先添加第一个分片的完整载荷
+        // First add the complete payload of the first fragment
         auto firstFragment = fragmentInfo.fragments.find(0);
         if (firstFragment != fragmentInfo.fragments.end()) {
-            log(LogLevel::DBG,
-                "添加第一个分片的完整载荷，大小: " +
-                    std::to_string(firstFragment->second.size()));
+            Log::d("ProtocolProcessor",
+                   "Adding first fragment complete payload, size: %zu",
+                   firstFragment->second.size());
             completePayload.insert(completePayload.end(),
                                    firstFragment->second.begin(),
                                    firstFragment->second.end());
         } else {
-            log(LogLevel::ERROR, "严重错误：缺少第一个分片（序号0）");
+            Log::e("ProtocolProcessor",
+                   "Critical error: missing first fragment (sequence 0)");
             return false;
         }
 
-        // 然后添加后续分片的数据部分（跳过头部信息）
+        // Then add the data portion of subsequent fragments (skip header
+        // information)
         for (uint8_t i = 0; i < fragmentInfo.totalFragments; ++i) {
             auto it = fragmentInfo.fragments.find(i);
             if (it != fragmentInfo.fragments.end()) {
@@ -1088,10 +1110,10 @@ bool ProtocolProcessor::reassembleFragments(
             }
         }
 
-        log(LogLevel::DBG,
-            "重组后的完整载荷大小: " + std::to_string(completePayload.size()));
+        Log::d("ProtocolProcessor", "Reassembled complete payload size: %zu",
+               completePayload.size());
 
-        // 构建完整帧
+        // Build complete frame
         completeFrame.clear();
         completeFrame.push_back(FRAME_DELIMITER_1);
         completeFrame.push_back(FRAME_DELIMITER_2);
@@ -1099,45 +1121,50 @@ bool ProtocolProcessor::reassembleFragments(
         completeFrame.push_back(0); // fragmentsSequence = 0
         completeFrame.push_back(0); // moreFragmentsFlag = 0
 
-        // 添加载荷长度
+        // Add payload length
         uint16_t payloadLength = static_cast<uint16_t>(completePayload.size());
         completeFrame.push_back(payloadLength & 0xFF);
         completeFrame.push_back((payloadLength >> 8) & 0xFF);
 
-        log(LogLevel::DBG, "设置完整帧头，PacketId: 0x" +
-                               std::to_string(frame.packetId) +
-                               ", 载荷长度: " + std::to_string(payloadLength));
+        Log::d("ProtocolProcessor",
+               "Setting complete frame header, PacketId: 0x%02X, payload "
+               "length: %d",
+               frame.packetId, payloadLength);
 
-        // 添加载荷
+        // Add payload
         completeFrame.insert(completeFrame.end(), completePayload.begin(),
                              completePayload.end());
 
-        log(LogLevel::INFO,
-            "完整帧重组完成，总大小: " + std::to_string(completeFrame.size()) +
-                " 字节，帧数据前缀: " + bytesToHexString(completeFrame, 16));
+        Log::i("ProtocolProcessor",
+               "Complete frame reassembly finished, total size: %zu bytes, "
+               "frame data prefix: %s",
+               completeFrame.size(),
+               bytesToHexString(completeFrame, 16).c_str());
 
-        // 清理分片信息
+        // Clean up fragment information
         fragmentMap_.erase(fragmentId);
-        log(LogLevel::DBG, "清理分片信息，当前分片映射大小: " +
-                               std::to_string(fragmentMap_.size()));
+        Log::d("ProtocolProcessor",
+               "Cleaning fragment info, current fragment map size: %zu",
+               fragmentMap_.size());
 
         return true;
     } else {
         if (fragmentInfo.totalFragments == 0) {
-            log(LogLevel::DBG, "尚未收到最后一个分片，无法确定总分片数");
+            Log::d("ProtocolProcessor",
+                   "Last fragment not yet received, cannot determine total "
+                   "fragment count");
         } else {
-            log(LogLevel::DBG,
-                "分片收集未完成，已收集: " +
-                    std::to_string(fragmentInfo.fragments.size()) +
-                    "，总分片数: " +
-                    std::to_string(fragmentInfo.totalFragments));
+            Log::d("ProtocolProcessor",
+                   "Fragment collection incomplete, collected: %zu, total "
+                   "fragments: %d",
+                   fragmentInfo.fragments.size(), fragmentInfo.totalFragments);
         }
     }
 
-    return false; // 还没有收集完所有分片
+    return false; // Haven't collected all fragments yet
 }
 
-// 获取下一个完整帧
+// Get next complete frame
 bool ProtocolProcessor::getNextCompleteFrame(Frame &frame) {
     if (completeFrames_.empty()) {
         return false;
@@ -1148,7 +1175,7 @@ bool ProtocolProcessor::getNextCompleteFrame(Frame &frame) {
     return true;
 }
 
-// 清空接收缓冲区
+// Clear receive buffer
 void ProtocolProcessor::clearReceiveBuffer() {
     receiveBuffer_.clear();
     while (!completeFrames_.empty()) {
@@ -1157,54 +1184,16 @@ void ProtocolProcessor::clearReceiveBuffer() {
     fragmentMap_.clear();
 }
 
-// 生成分片ID
+// Generate fragment ID
 uint64_t ProtocolProcessor::generateFragmentId(uint8_t packetId) {
     return packetId;
 }
 
-// 清理超时分片
+// Clean up expired fragments
 void ProtocolProcessor::cleanupExpiredFragments() {
-    // // 获取当前时间
-    // uint64_t currentTime =
-    // std::chrono::duration_cast<std::chrono::milliseconds>(
-    //     std::chrono::system_clock::now().time_since_epoch()).count();
-
-    // // 设置超时时间（5秒）
-    // constexpr uint64_t FRAGMENT_TIMEOUT_MS = 5000;
-
-    // log(LogLevel::DBG, "开始清理超时分片，当前分片映射大小: " +
-    // std::to_string(fragmentMap_.size()));
-
-    // // 找出超时的分片ID
-    // std::vector<uint64_t> expiredFragmentIds;
-    // for (const auto& entry : fragmentMap_) {
-    //     uint64_t fragmentId = entry.first;
-    //     const auto& fragmentInfo = entry.second;
-
-    //     if (currentTime - fragmentInfo.timestamp > FRAGMENT_TIMEOUT_MS) {
-    //         expiredFragmentIds.push_back(fragmentId);
-    //         log(LogLevel::INFO, "发现超时分片，FragmentId: 0x" +
-    //         std::to_string(fragmentId) +
-    //                           ", SourceId: 0x" +
-    //                           std::to_string(fragmentInfo.sourceId) +
-    //                           ", 已收集分片数: " +
-    //                           std::to_string(fragmentInfo.fragments.size()) +
-    //                           ", 超时时间: " + std::to_string((currentTime -
-    //                           fragmentInfo.timestamp)) + " ms");
-    //     }
-    // }
-
-    // // 删除超时的分片信息
-    // for (uint64_t fragmentId : expiredFragmentIds) {
-    //     fragmentMap_.erase(fragmentId);
-    // }
-
-    // if (!expiredFragmentIds.empty()) {
-    //     log(LogLevel::INFO, "清理了 " +
-    //     std::to_string(expiredFragmentIds.size()) +
-    //                       " 个超时分片，当前分片映射大小: " +
-    //                       std::to_string(fragmentMap_.size()));
-    // }
+    // Fragment timeout cleanup is currently disabled
+    // This function can be implemented to clean up expired fragments
+    // based on timestamp if needed in the future
 }
 
 } // namespace WhtsProtocol
