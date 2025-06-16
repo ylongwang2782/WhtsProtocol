@@ -20,14 +20,18 @@
       "type": "shell",
       "command": "cmake",
       "args": [
-        "--build", "build"
+        "--build", "${workspaceFolder}/build/debug"
       ],
-      "group": "build"
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "problemMatcher": []
     },
     {
-      "label": "Run UDP Server",
+      "label": "Run",
       "type": "shell",
-      "command": "${workspaceFolder}/build/udp_server.exe",
+      "command": "${workspaceFolder}/build/debug/slave.exe",
       "problemMatcher": [],
       "group": {
         "kind": "test",
