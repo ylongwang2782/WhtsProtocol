@@ -521,14 +521,31 @@ class UdpProtocolTester {
 
                 // Simulate slave ID
                 uint32_t slaveId = 0x12345678;
+                DeviceStatus deviceStatus = {0};
 
                 // Process message and generate response
                 auto response = processAndCreateResponse(slaveId, *message);
 
                 if (response) {
                     // Pack response message
-                    auto responseData =
-                        processor.packSlave2MasterMessage(slaveId, *response);
+                    std::vector<std::vector<uint8_t>> responseData;
+                    if (response->getMessageId() ==
+                            static_cast<uint8_t>(
+                                Slave2BackendMessageId::CONDUCTION_DATA_MSG) ||
+                        response->getMessageId() ==
+                            static_cast<uint8_t>(
+                                Slave2BackendMessageId::RESISTANCE_DATA_MSG) ||
+                        response->getMessageId() ==
+                            static_cast<uint8_t>(
+                                Slave2BackendMessageId::CLIP_DATA_MSG)) {
+                        Log::i("ResponseSender",
+                               "Packing Slave2Backend message");
+                        responseData = processor.packSlave2BackendMessage(
+                            slaveId, deviceStatus, *response);
+                    } else {
+                        responseData = processor.packSlave2MasterMessage(
+                            slaveId, *response);
+                    }
 
                     Log::i("ResponseSender", "Sending response:");
 
@@ -586,9 +603,8 @@ class UdpProtocolTester {
 
                     Log::i("ResponseSender", "Master2Backend response sent");
                 } else {
-                    Log::i(
-                        "ResponseSender",
-                        "No response needed for this Backend2Master message");
+                    Log::i("ResponseSender", "No response needed for this "
+                                             "Backend2Master message");
                 }
             } else {
                 Log::e("PacketProcessor",
@@ -599,7 +615,7 @@ class UdpProtocolTester {
             uint32_t slaveId;
             DeviceStatus deviceStatus;
             std::unique_ptr<Message> slaveMessage;
-
+            // FIXME 导通数据消息接受失败
             if (processor.parseSlave2BackendPacket(
                     frame.payload, slaveId, deviceStatus, slaveMessage)) {
                 Log::i("PacketProcessor",
@@ -735,13 +751,14 @@ class UdpProtocolTester {
                         const Master2Backend::DeviceListResponseMessage *>(
                         masterMessage.get());
                     if (deviceListRspMsg) {
-                        Log::i(
-                            "ResponseProcessor",
-                            "Received device list response - Device count: %d",
-                            static_cast<int>(deviceListRspMsg->deviceCount));
+                        Log::i("ResponseProcessor",
+                               "Received device list response - Device "
+                               "count: %d",
+                               static_cast<int>(deviceListRspMsg->deviceCount));
                         for (const auto &device : deviceListRspMsg->devices) {
                             Log::i("ResponseProcessor",
-                                   "  Device ID: 0x%08X, Short ID: %d, Online: "
+                                   "  Device ID: 0x%08X, Short ID: %d, "
+                                   "Online: "
                                    "%s, Version: "
                                    "%d.%d.%d",
                                    device.deviceId,
