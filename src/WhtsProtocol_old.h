@@ -1,128 +1,24 @@
 #ifndef WHTS_PROTOCOL_H
 #define WHTS_PROTOCOL_H
 
-#include <array>
-#include <cstdint>
-#include <iomanip>
-#include <iostream>
-#include <map>
-#include <memory>
-#include <queue>
-#include <sstream>
-#include <vector>
+/**
+ * @file WhtsProtocol.h
+ * @brief WhtsProtocol库的主要头文件
+ *
+ * 这个文件提供了协议库的统一入口点，包含了所有必要的子模块。
+ * 用户只需要包含这个头文件即可使用完整的协议库功能。
+ *
+ * 模块化结构：
+ * - protocol/Common.h - 通用常量和枚举定义
+ * - protocol/DeviceStatus.h - 设备状态管理
+ * - protocol/Frame.h - 帧结构定义和序列化
+ * - protocol/ProtocolProcessor.h - 协议处理器（核心功能）
+ * - protocol/messages/ - 所有消息类型的定义和实现
+ * - protocol/utils/ - 工具函数库
+ */
 
-namespace WhtsProtocol {
-
-std::string bytesToHexString(const std::vector<uint8_t> &data,
-                             size_t maxBytes = 16);
-
-// 协议常量
-constexpr uint8_t FRAME_DELIMITER_1 = 0xAB;
-constexpr uint8_t FRAME_DELIMITER_2 = 0xCD;
-constexpr uint32_t BROADCAST_ID = 0xFFFFFFFF;
-
-// Packet ID 枚举
-enum class PacketId : uint8_t {
-    MASTER_TO_SLAVE = 0x00,
-    SLAVE_TO_MASTER = 0x01,
-    BACKEND_TO_MASTER = 0x02,
-    MASTER_TO_BACKEND = 0x03,
-    SLAVE_TO_BACKEND = 0x04
-};
-
-// Master2Slave Message ID 枚举
-enum class Master2SlaveMessageId : uint8_t {
-    SYNC_MSG = 0x00,
-    CONDUCTION_CFG_MSG = 0x10,
-    RESISTANCE_CFG_MSG = 0x11,
-    CLIP_CFG_MSG = 0x12,
-    READ_COND_DATA_MSG = 0x20,
-    READ_RES_DATA_MSG = 0x21,
-    READ_CLIP_DATA_MSG = 0x22,
-    RST_MSG = 0x30,
-    PING_REQ_MSG = 0x40,
-    SHORT_ID_ASSIGN_MSG = 0x50
-};
-
-// Slave2Master Message ID 枚举
-enum class Slave2MasterMessageId : uint8_t {
-    CONDUCTION_CFG_MSG = 0x10,
-    RESISTANCE_CFG_MSG = 0x11,
-    CLIP_CFG_MSG = 0x22,
-    RST_MSG = 0x30,
-    PING_RSP_MSG = 0x41,
-    ANNOUNCE_MSG = 0x50,
-    SHORT_ID_CONFIRM_MSG = 0x51
-};
-
-// Backend2Master Message ID 枚举
-enum class Backend2MasterMessageId : uint8_t {
-    SLAVE_CFG_MSG = 0x00,
-    MODE_CFG_MSG = 0x01,
-    RST_MSG = 0x02,
-    CTRL_MSG = 0x03,
-    PING_CTRL_MSG = 0x10,
-    DEVICE_LIST_REQ_MSG = 0x11
-};
-
-// Master2Backend Message ID 枚举
-enum class Master2BackendMessageId : uint8_t {
-    SLAVE_CFG_RSP_MSG = 0x00,
-    MODE_CFG_RSP_MSG = 0x01,
-    RST_RSP_MSG = 0x02,
-    CTRL_RSP_MSG = 0x03,
-    PING_RES_MSG = 0x04,
-    DEVICE_LIST_RSP_MSG = 0x05
-};
-
-// Slave2Backend Message ID 枚举
-enum class Slave2BackendMessageId : uint8_t {
-    CONDUCTION_DATA_MSG = 0x00,
-    RESISTANCE_DATA_MSG = 0x01,
-    CLIP_DATA_MSG = 0x02
-};
-
-// 设备状态位结构
-struct DeviceStatus {
-    bool colorSensor : 1;
-    bool sleeveLimit : 1;
-    bool electromagnetUnlockButton : 1;
-    bool batteryLowAlarm : 1;
-    bool pressureSensor : 1;
-    bool electromagneticLock1 : 1;
-    bool electromagneticLock2 : 1;
-    bool accessory1 : 1;
-    bool accessory2 : 1;
-    uint8_t reserved : 7;
-
-    uint16_t toUint16() const;
-    void fromUint16(uint16_t status);
-};
-
-// 帧结构
-struct Frame {
-    uint8_t delimiter1;
-    uint8_t delimiter2;
-    uint8_t packetId;
-    uint8_t fragmentsSequence;
-    uint8_t moreFragmentsFlag;
-    uint16_t packetLength;
-    std::vector<uint8_t> payload;
-
-    Frame();
-    bool isValid() const;
-    std::vector<uint8_t> serialize() const;
-    static bool deserialize(const std::vector<uint8_t> &data, Frame &frame);
-};
-
-// 基础消息类
-class Message {
-  public:
-    virtual ~Message() = default;
-    virtual std::vector<uint8_t> serialize() const = 0;
-    virtual bool deserialize(const std::vector<uint8_t> &data) = 0;
-    virtual uint8_t getMessageId() const = 0;
-};
+// 包含协议模块头文件，提供统一入口
+#include "protocol/WhtsProtocol.h"
 
 // Master2Slave 消息类
 namespace Master2Slave {
