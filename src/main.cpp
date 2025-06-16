@@ -569,6 +569,152 @@ class UdpProtocolTester {
                        "Failed to parse Master2Slave packet");
             }
         } else if (frame.packetId ==
+                   static_cast<uint8_t>(PacketId::SLAVE_TO_MASTER)) {
+            uint32_t slaveId;
+            std::unique_ptr<Message> slaveMessage;
+
+            if (processor.parseSlave2MasterPacket(frame.payload, slaveId,
+                                                  slaveMessage)) {
+                Log::i("PacketProcessor",
+                       "Slave2Master packet parsed successfully:");
+                Log::i("PacketProcessor", "Slave ID: 0x%08X", slaveId);
+                Log::i("PacketProcessor", "Message ID: 0x%02X",
+                       static_cast<int>(slaveMessage->getMessageId()));
+
+                // Process different types of Slave2Master messages
+                switch (slaveMessage->getMessageId()) {
+                case static_cast<uint8_t>(
+                    Slave2MasterMessageId::CONDUCTION_CFG_MSG): {
+                    auto condConfigRspMsg = dynamic_cast<
+                        const Slave2Master::ConductionConfigResponseMessage *>(
+                        slaveMessage.get());
+                    if (condConfigRspMsg) {
+                        Log::i("ResponseProcessor",
+                               "Received conduction config response from slave "
+                               "0x%08X - Status: %d, Time slot: %d, Interval: "
+                               "%dms",
+                               slaveId,
+                               static_cast<int>(condConfigRspMsg->status),
+                               static_cast<int>(condConfigRspMsg->timeSlot),
+                               static_cast<int>(condConfigRspMsg->interval));
+                        Log::i("ResponseProcessor",
+                               "  Total: %d, Start: %d, Num: %d",
+                               condConfigRspMsg->totalConductionNum,
+                               condConfigRspMsg->startConductionNum,
+                               condConfigRspMsg->conductionNum);
+                    }
+                    break;
+                }
+                case static_cast<uint8_t>(
+                    Slave2MasterMessageId::RESISTANCE_CFG_MSG): {
+                    auto resConfigRspMsg = dynamic_cast<
+                        const Slave2Master::ResistanceConfigResponseMessage *>(
+                        slaveMessage.get());
+                    if (resConfigRspMsg) {
+                        Log::i("ResponseProcessor",
+                               "Received resistance config response from slave "
+                               "0x%08X - Status: %d, Time slot: %d, Interval: "
+                               "%dms",
+                               slaveId,
+                               static_cast<int>(resConfigRspMsg->status),
+                               static_cast<int>(resConfigRspMsg->timeSlot),
+                               static_cast<int>(resConfigRspMsg->interval));
+                        Log::i("ResponseProcessor",
+                               "  Total: %d, Start: %d, Num: %d",
+                               resConfigRspMsg->totalConductionNum,
+                               resConfigRspMsg->startConductionNum,
+                               resConfigRspMsg->conductionNum);
+                    }
+                    break;
+                }
+                case static_cast<uint8_t>(
+                    Slave2MasterMessageId::CLIP_CFG_MSG): {
+                    auto clipConfigRspMsg = dynamic_cast<
+                        const Slave2Master::ClipConfigResponseMessage *>(
+                        slaveMessage.get());
+                    if (clipConfigRspMsg) {
+                        Log::i("ResponseProcessor",
+                               "Received clip config response from slave "
+                               "0x%08X - Status: %d, Interval: %dms, Mode: %d",
+                               slaveId,
+                               static_cast<int>(clipConfigRspMsg->status),
+                               static_cast<int>(clipConfigRspMsg->interval),
+                               static_cast<int>(clipConfigRspMsg->mode));
+                        Log::i("ResponseProcessor", "  Clip pin: 0x%04X",
+                               clipConfigRspMsg->clipPin);
+                    }
+                    break;
+                }
+                case static_cast<uint8_t>(Slave2MasterMessageId::RST_MSG): {
+                    auto rstRspMsg =
+                        dynamic_cast<const Slave2Master::RstResponseMessage *>(
+                            slaveMessage.get());
+                    if (rstRspMsg) {
+                        Log::i("ResponseProcessor",
+                               "Received reset response from slave 0x%08X - "
+                               "Status: %d, Lock: %d, Clip LED: 0x%04X",
+                               slaveId, static_cast<int>(rstRspMsg->status),
+                               static_cast<int>(rstRspMsg->lockStatus),
+                               rstRspMsg->clipLed);
+                    }
+                    break;
+                }
+                case static_cast<uint8_t>(
+                    Slave2MasterMessageId::PING_RSP_MSG): {
+                    auto pingRspMsg =
+                        dynamic_cast<const Slave2Master::PingRspMessage *>(
+                            slaveMessage.get());
+                    if (pingRspMsg) {
+                        Log::i("ResponseProcessor",
+                               "Received ping response from slave 0x%08X - "
+                               "Sequence: %d, Timestamp: %u",
+                               slaveId, pingRspMsg->sequenceNumber,
+                               pingRspMsg->timestamp);
+                    }
+                    break;
+                }
+                case static_cast<uint8_t>(
+                    Slave2MasterMessageId::ANNOUNCE_MSG): {
+                    auto announceMsg =
+                        dynamic_cast<const Slave2Master::AnnounceMessage *>(
+                            slaveMessage.get());
+                    if (announceMsg) {
+                        Log::i("ResponseProcessor",
+                               "Received announce message from slave 0x%08X - "
+                               "Device ID: 0x%08X, Version: %d.%d.%d",
+                               slaveId, announceMsg->deviceId,
+                               static_cast<int>(announceMsg->versionMajor),
+                               static_cast<int>(announceMsg->versionMinor),
+                               announceMsg->versionPatch);
+                    }
+                    break;
+                }
+                case static_cast<uint8_t>(
+                    Slave2MasterMessageId::SHORT_ID_CONFIRM_MSG): {
+                    auto shortIdConfirmMsg = dynamic_cast<
+                        const Slave2Master::ShortIdConfirmMessage *>(
+                        slaveMessage.get());
+                    if (shortIdConfirmMsg) {
+                        Log::i("ResponseProcessor",
+                               "Received short ID confirm from slave 0x%08X - "
+                               "Status: %d, Short ID: %d",
+                               slaveId,
+                               static_cast<int>(shortIdConfirmMsg->status),
+                               static_cast<int>(shortIdConfirmMsg->shortId));
+                    }
+                    break;
+                }
+                default:
+                    Log::w("ResponseProcessor",
+                           "Unknown Slave2Master message type: 0x%02X",
+                           static_cast<int>(slaveMessage->getMessageId()));
+                    break;
+                }
+            } else {
+                Log::e("PacketProcessor",
+                       "Failed to parse Slave2Master packet");
+            }
+        } else if (frame.packetId ==
                    static_cast<uint8_t>(PacketId::BACKEND_TO_MASTER)) {
             std::unique_ptr<Message> backendMessage;
 
