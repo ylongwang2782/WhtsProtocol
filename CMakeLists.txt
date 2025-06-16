@@ -6,9 +6,9 @@ set(CMAKE_CXX_STANDARD 17)
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-add_executable(WhtsProtocol src/main.cpp src/WhtsProtocol.cpp src/Logger.cpp)
+add_executable(Slave src/main.cpp src/WhtsProtocol.cpp src/Logger.cpp)
 
 # Windows 平台需要链接 ws2_32 库
 if(WIN32)
-    target_link_libraries(WhtsProtocol ws2_32)
+    target_link_libraries(Slave ws2_32)
 endif()

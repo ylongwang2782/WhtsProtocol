@@ -278,10 +278,10 @@ The protocol is composed of Frames, Packets, and Messages.
 
 | Message ID | Value | 描述 |
 | --- | --- | --- |
-| SLAVE_CFG_MSG | 0x00 | 配置消息 |
-| MODE_CFG_MSG | 0x01 | 模式配置消息 |
-| RST_MSG | 0x02 | 复位消息 |
-| CTRL_MSG | 0x03 | 控制消息 |
+| SLAVE_CFG_RSP_MSG | 0x00 | 配置消息 |
+| MODE_CFG_RSP_MSG | 0x01 | 模式配置消息 |
+| RST_RSP_MSG | 0x02 | 复位消息 |
+| CTRL_RSP_MSG | 0x03 | 控制消息 |
 | PING_RES_MSG | 0x04 | Ping检测结果消息 |
 | DEVICE_LIST_RSP_MSG | 0x05 | 设备列表回复消息 |
 

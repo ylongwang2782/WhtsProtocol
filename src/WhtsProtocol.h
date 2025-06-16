@@ -67,10 +67,10 @@ enum class Backend2MasterMessageId : uint8_t {
 
 // Master2Backend Message ID 枚举
 enum class Master2BackendMessageId : uint8_t {
-    SLAVE_CFG_MSG = 0x00,
-    MODE_CFG_MSG = 0x01,
-    RST_MSG = 0x02,
-    CTRL_MSG = 0x03,
+    SLAVE_CFG_RSP_MSG = 0x00,
+    MODE_CFG_RSP_MSG = 0x01,
+    RST_RSP_MSG = 0x02,
+    CTRL_RSP_MSG = 0x03,
     PING_RES_MSG = 0x04,
     DEVICE_LIST_RSP_MSG = 0x05
 };
@@ -397,6 +397,200 @@ class ClipDataMessage : public Message {
 
 } // namespace Slave2Backend
 
+// Backend2Master 消息类
+namespace Backend2Master {
+
+class SlaveConfigMessage : public Message {
+  public:
+    struct SlaveInfo {
+        uint32_t id;
+        uint8_t conductionNum;
+        uint8_t resistanceNum;
+        uint8_t clipMode;
+        uint16_t clipStatus;
+    };
+    
+    uint8_t slaveNum;
+    std::vector<SlaveInfo> slaves;
+
+    std::vector<uint8_t> serialize() const override;
+    bool deserialize(const std::vector<uint8_t> &data) override;
+    uint8_t getMessageId() const override {
+        return static_cast<uint8_t>(Backend2MasterMessageId::SLAVE_CFG_MSG);
+    }
+};
+
+class ModeConfigMessage : public Message {
+  public:
+    uint8_t mode;
+
+    std::vector<uint8_t> serialize() const override;
+    bool deserialize(const std::vector<uint8_t> &data) override;
+    uint8_t getMessageId() const override {
+        return static_cast<uint8_t>(Backend2MasterMessageId::MODE_CFG_MSG);
+    }
+};
+
+class RstMessage : public Message {
+  public:
+    struct SlaveRstInfo {
+        uint32_t id;
+        uint8_t lock;
+        uint16_t clipStatus;
+    };
+    
+    uint8_t slaveNum;
+    std::vector<SlaveRstInfo> slaves;
+
+    std::vector<uint8_t> serialize() const override;
+    bool deserialize(const std::vector<uint8_t> &data) override;
+    uint8_t getMessageId() const override {
+        return static_cast<uint8_t>(Backend2MasterMessageId::RST_MSG);
+    }
+};
+
+class CtrlMessage : public Message {
+  public:
+    uint8_t runningStatus;
+
+    std::vector<uint8_t> serialize() const override;
+    bool deserialize(const std::vector<uint8_t> &data) override;
+    uint8_t getMessageId() const override {
+        return static_cast<uint8_t>(Backend2MasterMessageId::CTRL_MSG);
+    }
+};
+
+class PingCtrlMessage : public Message {
+  public:
+    uint8_t pingMode;
+    uint16_t pingCount;
+    uint16_t interval;
+    uint32_t destinationId;
+
+    std::vector<uint8_t> serialize() const override;
+    bool deserialize(const std::vector<uint8_t> &data) override;
+    uint8_t getMessageId() const override {
+        return static_cast<uint8_t>(Backend2MasterMessageId::PING_CTRL_MSG);
+    }
+};
+
+class DeviceListReqMessage : public Message {
+  public:
+    uint8_t reserve;
+
+    std::vector<uint8_t> serialize() const override;
+    bool deserialize(const std::vector<uint8_t> &data) override;
+    uint8_t getMessageId() const override {
+        return static_cast<uint8_t>(Backend2MasterMessageId::DEVICE_LIST_REQ_MSG);
+    }
+};
+
+} // namespace Backend2Master
+
+// Master2Backend 消息类
+namespace Master2Backend {
+
+class SlaveConfigResponseMessage : public Message {
+  public:
+    struct SlaveInfo {
+        uint32_t id;
+        uint8_t conductionNum;
+        uint8_t resistanceNum;
+        uint8_t clipMode;
+        uint16_t clipStatus;
+    };
+    
+    uint8_t status;
+    uint8_t slaveNum;
+    std::vector<SlaveInfo> slaves;
+
+    std::vector<uint8_t> serialize() const override;
+    bool deserialize(const std::vector<uint8_t> &data) override;
+    uint8_t getMessageId() const override {
+        return static_cast<uint8_t>(Master2BackendMessageId::SLAVE_CFG_RSP_MSG);
+    }
+};
+
+class ModeConfigResponseMessage : public Message {
+  public:
+    uint8_t status;
+    uint8_t mode;
+
+    std::vector<uint8_t> serialize() const override;
+    bool deserialize(const std::vector<uint8_t> &data) override;
+    uint8_t getMessageId() const override {
+        return static_cast<uint8_t>(Master2BackendMessageId::MODE_CFG_RSP_MSG);
+    }
+};
+
+class RstResponseMessage : public Message {
+  public:
+    struct SlaveRstInfo {
+        uint32_t id;
+        uint8_t lock;
+        uint16_t clipStatus;
+    };
+    
+    uint8_t status;
+    uint8_t slaveNum;
+    std::vector<SlaveRstInfo> slaves;
+
+    std::vector<uint8_t> serialize() const override;
+    bool deserialize(const std::vector<uint8_t> &data) override;
+    uint8_t getMessageId() const override {
+        return static_cast<uint8_t>(Master2BackendMessageId::RST_RSP_MSG);
+    }
+};
+
+class CtrlResponseMessage : public Message {
+  public:
+    uint8_t status;
+    uint8_t runningStatus;
+
+    std::vector<uint8_t> serialize() const override;
+    bool deserialize(const std::vector<uint8_t> &data) override;
+    uint8_t getMessageId() const override {
+        return static_cast<uint8_t>(Master2BackendMessageId::CTRL_RSP_MSG);
+    }
+};
+
+class PingResponseMessage : public Message {
+  public:
+    uint8_t pingMode;
+    uint16_t totalCount;
+    uint16_t successCount;
+    uint32_t destinationId;
+
+    std::vector<uint8_t> serialize() const override;
+    bool deserialize(const std::vector<uint8_t> &data) override;
+    uint8_t getMessageId() const override {
+        return static_cast<uint8_t>(Master2BackendMessageId::PING_RES_MSG);
+    }
+};
+
+class DeviceListResponseMessage : public Message {
+  public:
+    struct DeviceInfo {
+        uint32_t deviceId;
+        uint8_t shortId;
+        uint8_t online;
+        uint8_t versionMajor;
+        uint8_t versionMinor;
+        uint16_t versionPatch;
+    };
+    
+    uint8_t deviceCount;
+    std::vector<DeviceInfo> devices;
+
+    std::vector<uint8_t> serialize() const override;
+    bool deserialize(const std::vector<uint8_t> &data) override;
+    uint8_t getMessageId() const override {
+        return static_cast<uint8_t>(Master2BackendMessageId::DEVICE_LIST_RSP_MSG);
+    }
+};
+
+} // namespace Master2Backend
+
 // 协议处理器类
 class ProtocolProcessor {
   public:
@@ -420,6 +614,14 @@ class ProtocolProcessor {
     packSlave2BackendMessage(uint32_t slaveId, const DeviceStatus &deviceStatus,
                              const Message &message);
 
+    // 打包Backend2Master消息 (支持自动分片)
+    std::vector<std::vector<uint8_t>>
+    packBackend2MasterMessage(const Message &message);
+
+    // 打包Master2Backend消息 (支持自动分片)
+    std::vector<std::vector<uint8_t>>
+    packMaster2BackendMessage(const Message &message);
+
     // 兼容旧接口 - 单帧打包
     std::vector<uint8_t> packMaster2SlaveMessageSingle(
         uint32_t destinationId, const Message &message,
@@ -432,6 +634,14 @@ class ProtocolProcessor {
 
     std::vector<uint8_t> packSlave2BackendMessageSingle(
         uint32_t slaveId, const DeviceStatus &deviceStatus,
+        const Message &message, uint8_t fragmentsSequence = 0,
+        uint8_t moreFragmentsFlag = 0);
+
+    std::vector<uint8_t> packBackend2MasterMessageSingle(
+        const Message &message, uint8_t fragmentsSequence = 0,
+        uint8_t moreFragmentsFlag = 0);
+
+    std::vector<uint8_t> packMaster2BackendMessageSingle(
         const Message &message, uint8_t fragmentsSequence = 0,
         uint8_t moreFragmentsFlag = 0);
 
@@ -465,6 +675,14 @@ class ProtocolProcessor {
     bool parseSlave2BackendPacket(const std::vector<uint8_t> &payload,
                                   uint32_t &slaveId, DeviceStatus &deviceStatus,
                                   std::unique_ptr<Message> &message);
+
+    // 解析Backend2Master包
+    bool parseBackend2MasterPacket(const std::vector<uint8_t> &payload,
+                                   std::unique_ptr<Message> &message);
+
+    // 解析Master2Backend包
+    bool parseMaster2BackendPacket(const std::vector<uint8_t> &payload,
+                                   std::unique_ptr<Message> &message);
 
   private:
     // 分片相关的私有结构

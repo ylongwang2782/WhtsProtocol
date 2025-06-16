@@ -16,7 +16,7 @@
       "group": "build"
     },
     {
-      "label": "Build Project",
+      "label": "build",
       "type": "shell",
       "command": "cmake",
       "args": [

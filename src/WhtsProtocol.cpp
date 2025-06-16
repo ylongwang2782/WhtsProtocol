@@ -212,6 +212,48 @@ std::vector<uint8_t> ProtocolProcessor::packSlave2BackendMessageSingle(
     return frame.serialize();
 }
 
+std::vector<uint8_t> ProtocolProcessor::packBackend2MasterMessageSingle(
+    const Message &message, uint8_t fragmentsSequence,
+    uint8_t moreFragmentsFlag) {
+    Frame frame;
+    frame.packetId = static_cast<uint8_t>(PacketId::BACKEND_TO_MASTER);
+    frame.fragmentsSequence = fragmentsSequence;
+    frame.moreFragmentsFlag = moreFragmentsFlag;
+
+    // 构建载荷
+    std::vector<uint8_t> payload;
+    payload.push_back(message.getMessageId());
+
+    auto messageData = message.serialize();
+    payload.insert(payload.end(), messageData.begin(), messageData.end());
+
+    frame.payload = payload;
+    frame.packetLength = static_cast<uint16_t>(payload.size());
+
+    return frame.serialize();
+}
+
+std::vector<uint8_t> ProtocolProcessor::packMaster2BackendMessageSingle(
+    const Message &message, uint8_t fragmentsSequence,
+    uint8_t moreFragmentsFlag) {
+    Frame frame;
+    frame.packetId = static_cast<uint8_t>(PacketId::MASTER_TO_BACKEND);
+    frame.fragmentsSequence = fragmentsSequence;
+    frame.moreFragmentsFlag = moreFragmentsFlag;
+
+    // 构建载荷
+    std::vector<uint8_t> payload;
+    payload.push_back(message.getMessageId());
+
+    auto messageData = message.serialize();
+    payload.insert(payload.end(), messageData.begin(), messageData.end());
+
+    frame.payload = payload;
+    frame.packetLength = static_cast<uint16_t>(payload.size());
+
+    return frame.serialize();
+}
+
 bool ProtocolProcessor::parseFrame(const std::vector<uint8_t> &data,
                                    Frame &frame) {
     return Frame::deserialize(data, frame);
@@ -277,6 +319,40 @@ std::unique_ptr<Message> ProtocolProcessor::createMessage(PacketId packetId,
         }
         break;
 
+    case PacketId::BACKEND_TO_MASTER:
+        switch (static_cast<Backend2MasterMessageId>(messageId)) {
+        case Backend2MasterMessageId::SLAVE_CFG_MSG:
+            return std::make_unique<Backend2Master::SlaveConfigMessage>();
+        case Backend2MasterMessageId::MODE_CFG_MSG:
+            return std::make_unique<Backend2Master::ModeConfigMessage>();
+        case Backend2MasterMessageId::RST_MSG:
+            return std::make_unique<Backend2Master::RstMessage>();
+        case Backend2MasterMessageId::CTRL_MSG:
+            return std::make_unique<Backend2Master::CtrlMessage>();
+        case Backend2MasterMessageId::PING_CTRL_MSG:
+            return std::make_unique<Backend2Master::PingCtrlMessage>();
+        case Backend2MasterMessageId::DEVICE_LIST_REQ_MSG:
+            return std::make_unique<Backend2Master::DeviceListReqMessage>();
+        }
+        break;
+
+    case PacketId::MASTER_TO_BACKEND:
+        switch (static_cast<Master2BackendMessageId>(messageId)) {
+        case Master2BackendMessageId::SLAVE_CFG_RSP_MSG:
+            return std::make_unique<Master2Backend::SlaveConfigResponseMessage>();
+        case Master2BackendMessageId::MODE_CFG_RSP_MSG:
+            return std::make_unique<Master2Backend::ModeConfigResponseMessage>();
+        case Master2BackendMessageId::RST_RSP_MSG:
+            return std::make_unique<Master2Backend::RstResponseMessage>();
+        case Master2BackendMessageId::CTRL_RSP_MSG:
+            return std::make_unique<Master2Backend::CtrlResponseMessage>();
+        case Master2BackendMessageId::PING_RES_MSG:
+            return std::make_unique<Master2Backend::PingResponseMessage>();
+        case Master2BackendMessageId::DEVICE_LIST_RSP_MSG:
+            return std::make_unique<Master2Backend::DeviceListResponseMessage>();
+        }
+        break;
+
     default:
         break;
     }
@@ -332,6 +408,36 @@ bool ProtocolProcessor::parseSlave2BackendPacket(
         return false;
 
     std::vector<uint8_t> messageData(payload.begin() + 7, payload.end());
+    return message->deserialize(messageData);
+}
+
+bool ProtocolProcessor::parseBackend2MasterPacket(
+    const std::vector<uint8_t> &payload, std::unique_ptr<Message> &message) {
+    if (payload.size() < 1)
+        return false;
+
+    uint8_t messageId = payload[0];
+
+    message = createMessage(PacketId::BACKEND_TO_MASTER, messageId);
+    if (!message)
+        return false;
+
+    std::vector<uint8_t> messageData(payload.begin() + 1, payload.end());
+    return message->deserialize(messageData);
+}
+
+bool ProtocolProcessor::parseMaster2BackendPacket(
+    const std::vector<uint8_t> &payload, std::unique_ptr<Message> &message) {
+    if (payload.size() < 1)
+        return false;
+
+    uint8_t messageId = payload[0];
+
+    message = createMessage(PacketId::MASTER_TO_BACKEND, messageId);
+    if (!message)
+        return false;
+
+    std::vector<uint8_t> messageData(payload.begin() + 1, payload.end());
     return message->deserialize(messageData);
 }
 
@@ -711,6 +817,370 @@ bool ClipDataMessage::deserialize(const std::vector<uint8_t> &data) {
 
 } // namespace Slave2Backend
 
+// Backend2Master 消息实现
+namespace Backend2Master {
+
+std::vector<uint8_t> SlaveConfigMessage::serialize() const {
+    std::vector<uint8_t> result;
+    result.push_back(slaveNum);
+    
+    for (const auto& slave : slaves) {
+        // Write slave ID (4 bytes, little endian)
+        result.push_back(slave.id & 0xFF);
+        result.push_back((slave.id >> 8) & 0xFF);
+        result.push_back((slave.id >> 16) & 0xFF);
+        result.push_back((slave.id >> 24) & 0xFF);
+        
+        result.push_back(slave.conductionNum);
+        result.push_back(slave.resistanceNum);
+        result.push_back(slave.clipMode);
+        
+        // Write clip status (2 bytes, little endian)
+        result.push_back(slave.clipStatus & 0xFF);
+        result.push_back((slave.clipStatus >> 8) & 0xFF);
+    }
+    
+    return result;
+}
+
+bool SlaveConfigMessage::deserialize(const std::vector<uint8_t> &data) {
+    if (data.size() < 1) return false;
+    
+    slaveNum = data[0];
+    slaves.clear();
+    
+    size_t offset = 1;
+    for (uint8_t i = 0; i < slaveNum; ++i) {
+        if (offset + 9 > data.size()) return false; // Each slave info is 9 bytes
+        
+        SlaveInfo slave;
+        slave.id = data[offset] | (data[offset + 1] << 8) | 
+                   (data[offset + 2] << 16) | (data[offset + 3] << 24);
+        slave.conductionNum = data[offset + 4];
+        slave.resistanceNum = data[offset + 5];
+        slave.clipMode = data[offset + 6];
+        slave.clipStatus = data[offset + 7] | (data[offset + 8] << 8);
+        
+        slaves.push_back(slave);
+        offset += 9;
+    }
+    
+    return true;
+}
+
+std::vector<uint8_t> ModeConfigMessage::serialize() const {
+    return {mode};
+}
+
+bool ModeConfigMessage::deserialize(const std::vector<uint8_t> &data) {
+    if (data.size() < 1) return false;
+    mode = data[0];
+    return true;
+}
+
+std::vector<uint8_t> RstMessage::serialize() const {
+    std::vector<uint8_t> result;
+    result.push_back(slaveNum);
+    
+    for (const auto& slave : slaves) {
+        // Write slave ID (4 bytes, little endian)
+        result.push_back(slave.id & 0xFF);
+        result.push_back((slave.id >> 8) & 0xFF);
+        result.push_back((slave.id >> 16) & 0xFF);
+        result.push_back((slave.id >> 24) & 0xFF);
+        
+        result.push_back(slave.lock);
+        
+        // Write clip status (2 bytes, little endian)
+        result.push_back(slave.clipStatus & 0xFF);
+        result.push_back((slave.clipStatus >> 8) & 0xFF);
+    }
+    
+    return result;
+}
+
+bool RstMessage::deserialize(const std::vector<uint8_t> &data) {
+    if (data.size() < 1) return false;
+    
+    slaveNum = data[0];
+    slaves.clear();
+    
+    size_t offset = 1;
+    for (uint8_t i = 0; i < slaveNum; ++i) {
+        if (offset + 7 > data.size()) return false; // Each slave rst info is 7 bytes
+        
+        SlaveRstInfo slave;
+        slave.id = data[offset] | (data[offset + 1] << 8) | 
+                   (data[offset + 2] << 16) | (data[offset + 3] << 24);
+        slave.lock = data[offset + 4];
+        slave.clipStatus = data[offset + 5] | (data[offset + 6] << 8);
+        
+        slaves.push_back(slave);
+        offset += 7;
+    }
+    
+    return true;
+}
+
+std::vector<uint8_t> CtrlMessage::serialize() const {
+    return {runningStatus};
+}
+
+bool CtrlMessage::deserialize(const std::vector<uint8_t> &data) {
+    if (data.size() < 1) return false;
+    runningStatus = data[0];
+    return true;
+}
+
+std::vector<uint8_t> PingCtrlMessage::serialize() const {
+    std::vector<uint8_t> result;
+    result.push_back(pingMode);
+    
+    // Write ping count (2 bytes, little endian)
+    result.push_back(pingCount & 0xFF);
+    result.push_back((pingCount >> 8) & 0xFF);
+    
+    // Write interval (2 bytes, little endian)
+    result.push_back(interval & 0xFF);
+    result.push_back((interval >> 8) & 0xFF);
+    
+    // Write destination ID (4 bytes, little endian)
+    result.push_back(destinationId & 0xFF);
+    result.push_back((destinationId >> 8) & 0xFF);
+    result.push_back((destinationId >> 16) & 0xFF);
+    result.push_back((destinationId >> 24) & 0xFF);
+    
+    return result;
+}
+
+bool PingCtrlMessage::deserialize(const std::vector<uint8_t> &data) {
+    if (data.size() < 9) return false;
+    
+    pingMode = data[0];
+    pingCount = data[1] | (data[2] << 8);
+    interval = data[3] | (data[4] << 8);
+    destinationId = data[5] | (data[6] << 8) | (data[7] << 16) | (data[8] << 24);
+    
+    return true;
+}
+
+std::vector<uint8_t> DeviceListReqMessage::serialize() const {
+    return {reserve};
+}
+
+bool DeviceListReqMessage::deserialize(const std::vector<uint8_t> &data) {
+    if (data.size() < 1) return false;
+    reserve = data[0];
+    return true;
+}
+
+} // namespace Backend2Master
+
+// Master2Backend 消息实现
+namespace Master2Backend {
+
+std::vector<uint8_t> SlaveConfigResponseMessage::serialize() const {
+    std::vector<uint8_t> result;
+    result.push_back(status);
+    result.push_back(slaveNum);
+    
+    for (const auto& slave : slaves) {
+        // Write slave ID (4 bytes, little endian)
+        result.push_back(slave.id & 0xFF);
+        result.push_back((slave.id >> 8) & 0xFF);
+        result.push_back((slave.id >> 16) & 0xFF);
+        result.push_back((slave.id >> 24) & 0xFF);
+        
+        result.push_back(slave.conductionNum);
+        result.push_back(slave.resistanceNum);
+        result.push_back(slave.clipMode);
+        
+        // Write clip status (2 bytes, little endian)
+        result.push_back(slave.clipStatus & 0xFF);
+        result.push_back((slave.clipStatus >> 8) & 0xFF);
+    }
+    
+    return result;
+}
+
+bool SlaveConfigResponseMessage::deserialize(const std::vector<uint8_t> &data) {
+    if (data.size() < 2) return false;
+    
+    status = data[0];
+    slaveNum = data[1];
+    slaves.clear();
+    
+    size_t offset = 2;
+    for (uint8_t i = 0; i < slaveNum; ++i) {
+        if (offset + 9 > data.size()) return false; // Each slave info is 9 bytes
+        
+        SlaveInfo slave;
+        slave.id = data[offset] | (data[offset + 1] << 8) | 
+                   (data[offset + 2] << 16) | (data[offset + 3] << 24);
+        slave.conductionNum = data[offset + 4];
+        slave.resistanceNum = data[offset + 5];
+        slave.clipMode = data[offset + 6];
+        slave.clipStatus = data[offset + 7] | (data[offset + 8] << 8);
+        
+        slaves.push_back(slave);
+        offset += 9;
+    }
+    
+    return true;
+}
+
+std::vector<uint8_t> ModeConfigResponseMessage::serialize() const {
+    return {status, mode};
+}
+
+bool ModeConfigResponseMessage::deserialize(const std::vector<uint8_t> &data) {
+    if (data.size() < 2) return false;
+    status = data[0];
+    mode = data[1];
+    return true;
+}
+
+std::vector<uint8_t> RstResponseMessage::serialize() const {
+    std::vector<uint8_t> result;
+    result.push_back(status);
+    result.push_back(slaveNum);
+    
+    for (const auto& slave : slaves) {
+        // Write slave ID (4 bytes, little endian)
+        result.push_back(slave.id & 0xFF);
+        result.push_back((slave.id >> 8) & 0xFF);
+        result.push_back((slave.id >> 16) & 0xFF);
+        result.push_back((slave.id >> 24) & 0xFF);
+        
+        result.push_back(slave.lock);
+        
+        // Write clip status (2 bytes, little endian)
+        result.push_back(slave.clipStatus & 0xFF);
+        result.push_back((slave.clipStatus >> 8) & 0xFF);
+    }
+    
+    return result;
+}
+
+bool RstResponseMessage::deserialize(const std::vector<uint8_t> &data) {
+    if (data.size() < 2) return false;
+    
+    status = data[0];
+    slaveNum = data[1];
+    slaves.clear();
+    
+    size_t offset = 2;
+    for (uint8_t i = 0; i < slaveNum; ++i) {
+        if (offset + 7 > data.size()) return false; // Each slave rst info is 7 bytes
+        
+        SlaveRstInfo slave;
+        slave.id = data[offset] | (data[offset + 1] << 8) | 
+                   (data[offset + 2] << 16) | (data[offset + 3] << 24);
+        slave.lock = data[offset + 4];
+        slave.clipStatus = data[offset + 5] | (data[offset + 6] << 8);
+        
+        slaves.push_back(slave);
+        offset += 7;
+    }
+    
+    return true;
+}
+
+std::vector<uint8_t> CtrlResponseMessage::serialize() const {
+    return {status, runningStatus};
+}
+
+bool CtrlResponseMessage::deserialize(const std::vector<uint8_t> &data) {
+    if (data.size() < 2) return false;
+    status = data[0];
+    runningStatus = data[1];
+    return true;
+}
+
+std::vector<uint8_t> PingResponseMessage::serialize() const {
+    std::vector<uint8_t> result;
+    result.push_back(pingMode);
+    
+    // Write total count (2 bytes, little endian)
+    result.push_back(totalCount & 0xFF);
+    result.push_back((totalCount >> 8) & 0xFF);
+    
+    // Write success count (2 bytes, little endian)
+    result.push_back(successCount & 0xFF);
+    result.push_back((successCount >> 8) & 0xFF);
+    
+    // Write destination ID (4 bytes, little endian)
+    result.push_back(destinationId & 0xFF);
+    result.push_back((destinationId >> 8) & 0xFF);
+    result.push_back((destinationId >> 16) & 0xFF);
+    result.push_back((destinationId >> 24) & 0xFF);
+    
+    return result;
+}
+
+bool PingResponseMessage::deserialize(const std::vector<uint8_t> &data) {
+    if (data.size() < 9) return false;
+    
+    pingMode = data[0];
+    totalCount = data[1] | (data[2] << 8);
+    successCount = data[3] | (data[4] << 8);
+    destinationId = data[5] | (data[6] << 8) | (data[7] << 16) | (data[8] << 24);
+    
+    return true;
+}
+
+std::vector<uint8_t> DeviceListResponseMessage::serialize() const {
+    std::vector<uint8_t> result;
+    result.push_back(deviceCount);
+    
+    for (const auto& device : devices) {
+        // Write device ID (4 bytes, little endian)
+        result.push_back(device.deviceId & 0xFF);
+        result.push_back((device.deviceId >> 8) & 0xFF);
+        result.push_back((device.deviceId >> 16) & 0xFF);
+        result.push_back((device.deviceId >> 24) & 0xFF);
+        
+        result.push_back(device.shortId);
+        result.push_back(device.online);
+        result.push_back(device.versionMajor);
+        result.push_back(device.versionMinor);
+        
+        // Write version patch (2 bytes, little endian)
+        result.push_back(device.versionPatch & 0xFF);
+        result.push_back((device.versionPatch >> 8) & 0xFF);
+    }
+    
+    return result;
+}
+
+bool DeviceListResponseMessage::deserialize(const std::vector<uint8_t> &data) {
+    if (data.size() < 1) return false;
+    
+    deviceCount = data[0];
+    devices.clear();
+    
+    size_t offset = 1;
+    for (uint8_t i = 0; i < deviceCount; ++i) {
+        if (offset + 10 > data.size()) return false; // Each device info is 10 bytes
+        
+        DeviceInfo device;
+        device.deviceId = data[offset] | (data[offset + 1] << 8) | 
+                         (data[offset + 2] << 16) | (data[offset + 3] << 24);
+        device.shortId = data[offset + 4];
+        device.online = data[offset + 5];
+        device.versionMajor = data[offset + 6];
+        device.versionMinor = data[offset + 7];
+        device.versionPatch = data[offset + 8] | (data[offset + 9] << 8);
+        
+        devices.push_back(device);
+        offset += 10;
+    }
+    
+    return true;
+}
+
+} // namespace Master2Backend
+
 // ProtocolProcessor 分片和粘包处理功能实现
 
 // 支持自动分片的打包函数
@@ -754,6 +1224,36 @@ ProtocolProcessor::packSlave2BackendMessage(uint32_t slaveId,
     // 首先生成单个完整帧
     auto completeFrame =
         packSlave2BackendMessageSingle(slaveId, deviceStatus, message, 0, 0);
+
+    // 检查是否需要分片
+    if (completeFrame.size() <= mtu_) {
+        // 不需要分片，直接返回
+        return {completeFrame};
+    }
+
+    // 需要分片
+    return fragmentFrame(completeFrame);
+}
+
+std::vector<std::vector<uint8_t>>
+ProtocolProcessor::packBackend2MasterMessage(const Message &message) {
+    // 首先生成单个完整帧
+    auto completeFrame = packBackend2MasterMessageSingle(message, 0, 0);
+
+    // 检查是否需要分片
+    if (completeFrame.size() <= mtu_) {
+        // 不需要分片，直接返回
+        return {completeFrame};
+    }
+
+    // 需要分片
+    return fragmentFrame(completeFrame);
+}
+
+std::vector<std::vector<uint8_t>>
+ProtocolProcessor::packMaster2BackendMessage(const Message &message) {
+    // 首先生成单个完整帧
+    auto completeFrame = packMaster2BackendMessageSingle(message, 0, 0);
 
     // 检查是否需要分片
     if (completeFrame.size() <= mtu_) {
