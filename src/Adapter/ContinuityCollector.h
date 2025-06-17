@@ -20,14 +20,23 @@ enum class ContinuityState : uint8_t {
 
 // 导通数据采集配置
 struct CollectorConfig {
-    uint8_t num;       // 导通检测数量 (< 64)
-    uint32_t interval; // 检测间隔 (毫秒)
-    bool autoStart;    // 是否自动开始采集
+    uint8_t num;               // 导通检测数量 a (< 64)
+    uint8_t startDetectionNum; // 开始检测数量 b
+    uint8_t totalDetectionNum; // 总检测数量 k
+    uint32_t interval;         // 检测间隔 (毫秒)
+    bool autoStart;            // 是否自动开始采集
 
-    CollectorConfig(uint8_t n = 8, uint32_t i = 100, bool autoS = false)
-        : num(n), interval(i), autoStart(autoS) {
+    CollectorConfig(uint8_t n = 8, uint8_t startDetNum = 0,
+                    uint8_t totalDetNum = 16, uint32_t i = 100,
+                    bool autoS = false)
+        : num(n), startDetectionNum(startDetNum),
+          totalDetectionNum(totalDetNum), interval(i), autoStart(autoS) {
         if (num > 64)
             num = 64;
+        if (totalDetectionNum == 0 || totalDetectionNum > 64)
+            totalDetectionNum = 64;
+        if (startDetectionNum >= totalDetectionNum)
+            startDetectionNum = 0;
     }
 };
 
@@ -64,10 +73,11 @@ class ContinuityCollector {
     ProgressCallback progressCallback_; // 进度回调
 
     // 私有方法
-    void collectionWorker();                        // 采集工作线程
-    void initializeGpioPins();                      // 初始化GPIO引脚
-    void deinitializeGpioPins();                    // 反初始化GPIO引脚
-    ContinuityState readPinContinuity(uint8_t pin); // 读取单个引脚导通状态
+    void collectionWorker();                          // 采集工作线程
+    void initializeGpioPins();                        // 初始化GPIO引脚
+    void deinitializeGpioPins();                      // 反初始化GPIO引脚
+    ContinuityState readPinContinuity(uint8_t pin);   // 读取单个引脚导通状态
+    void configurePinsForCycle(uint8_t currentCycle); // 为当前周期配置引脚模式
 
   public:
     ContinuityCollector(std::unique_ptr<HAL::IGpio> gpio);
@@ -103,6 +113,9 @@ class ContinuityCollector {
 
     // 获取数据矩阵（线程安全）
     ContinuityMatrix getDataMatrix() const;
+
+    // 获取压缩数据向量（按位压缩，小端模式）
+    std::vector<uint8_t> getDataVector() const;
 
     // 获取指定周期的数据行
     std::vector<ContinuityState> getCycleData(uint8_t cycle) const;

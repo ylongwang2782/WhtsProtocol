@@ -32,13 +32,22 @@ bool ContinuityCollector::configure(const CollectorConfig &config) {
         return false;
     }
 
+    if (config.totalDetectionNum == 0 ||
+        config.totalDetectionNum > MAX_GPIO_PINS) {
+        return false;
+    }
+
+    if (config.startDetectionNum >= config.totalDetectionNum) {
+        return false;
+    }
+
     config_ = config;
 
-    // 重新初始化数据矩阵
+    // 重新初始化数据矩阵 - 基于总检测数量
     {
         std::lock_guard<std::mutex> lock(dataMutex_);
         dataMatrix_.clear();
-        dataMatrix_.resize(config_.num,
+        dataMatrix_.resize(config_.totalDetectionNum,
                            std::vector<ContinuityState>(
                                config_.num, ContinuityState::DISCONNECTED));
     }
@@ -100,7 +109,9 @@ uint8_t ContinuityCollector::getCurrentCycle() const {
     return currentCycle_.load();
 }
 
-uint8_t ContinuityCollector::getTotalCycles() const { return config_.num; }
+uint8_t ContinuityCollector::getTotalCycles() const {
+    return config_.totalDetectionNum;
+}
 
 uint8_t ContinuityCollector::getProgress() const {
     uint8_t current = getCurrentCycle();
@@ -117,6 +128,45 @@ bool ContinuityCollector::isCollectionComplete() const {
 ContinuityMatrix ContinuityCollector::getDataMatrix() const {
     std::lock_guard<std::mutex> lock(dataMutex_);
     return dataMatrix_;
+}
+
+std::vector<uint8_t> ContinuityCollector::getDataVector() const {
+    std::lock_guard<std::mutex> lock(dataMutex_);
+    std::vector<uint8_t> compressedData;
+
+    // 计算总位数
+    size_t totalBits = dataMatrix_.size() * config_.num;
+    size_t totalBytes = (totalBits + 7) / 8; // 向上取整
+    compressedData.reserve(totalBytes);
+
+    uint8_t currentByte = 0;
+    uint8_t bitPosition = 0;
+
+    // 按行遍历矩阵，将每个状态转换为位
+    for (const auto &row : dataMatrix_) {
+        for (size_t pin = 0; pin < config_.num && pin < row.size(); pin++) {
+            // 将导通状态转换为位值
+            uint8_t bitValue = (row[pin] == ContinuityState::CONNECTED) ? 1 : 0;
+
+            // 按小端模式设置位（低位在前）
+            currentByte |= (bitValue << bitPosition);
+            bitPosition++;
+
+            // 如果累积了8位，保存字节并重置
+            if (bitPosition == 8) {
+                compressedData.push_back(currentByte);
+                currentByte = 0;
+                bitPosition = 0;
+            }
+        }
+    }
+
+    // 如果还有未满8位的数据，补零并保存
+    if (bitPosition > 0) {
+        compressedData.push_back(currentByte);
+    }
+
+    return compressedData;
 }
 
 std::vector<ContinuityState>
@@ -165,8 +215,13 @@ std::string ContinuityCollector::exportDataAsString() const {
     std::lock_guard<std::mutex> lock(dataMutex_);
     std::ostringstream oss;
 
-    oss << "Continuity Data Matrix (" << config_.num << "x" << config_.num
-        << "):\n";
+    oss << "Continuity Data Matrix (" << config_.totalDetectionNum << "x"
+        << config_.num << "):\n";
+    oss << "Detection Pins: " << static_cast<int>(config_.num) << "\n";
+    oss << "Start Detection: " << static_cast<int>(config_.startDetectionNum)
+        << "\n";
+    oss << "Total Detection: " << static_cast<int>(config_.totalDetectionNum)
+        << "\n";
     oss << "Interval: " << config_.interval << "ms\n\n";
 
     // 表头
@@ -247,9 +302,12 @@ void ContinuityCollector::simulateTestPattern(uint32_t pattern) {
 // 私有方法实现
 void ContinuityCollector::collectionWorker() {
     try {
-        for (uint8_t cycle = 0; cycle < config_.num && !stopRequested_;
-             cycle++) {
+        for (uint8_t cycle = 0;
+             cycle < config_.totalDetectionNum && !stopRequested_; cycle++) {
             currentCycle_ = cycle;
+
+            // 为当前周期配置GPIO引脚模式
+            configurePinsForCycle(cycle);
 
             // 读取当前周期的所有引脚状态
             std::vector<ContinuityState> cycleData;
@@ -269,11 +327,11 @@ void ContinuityCollector::collectionWorker() {
 
             // 调用进度回调
             if (progressCallback_) {
-                progressCallback_(cycle + 1, config_.num);
+                progressCallback_(cycle + 1, config_.totalDetectionNum);
             }
 
             // 等待指定间隔（除了最后一个周期）
-            if (cycle < config_.num - 1 && !stopRequested_) {
+            if (cycle < config_.totalDetectionNum - 1 && !stopRequested_) {
                 std::this_thread::sleep_for(
                     std::chrono::milliseconds(config_.interval));
             }
@@ -319,6 +377,44 @@ ContinuityState ContinuityCollector::readPinContinuity(uint8_t pin) {
     // 高电平表示导通，低电平表示断开
     return (gpioState == HAL::GpioState::HIGH) ? ContinuityState::CONNECTED
                                                : ContinuityState::DISCONNECTED;
+}
+
+void ContinuityCollector::configurePinsForCycle(uint8_t currentCycle) {
+    if (!gpio_) {
+        return;
+    }
+
+    // 检测逻辑：
+    // 当 startDetectionNum <= currentCycle < startDetectionNum + num 时
+    // 将对应的引脚设置为高电平输出，其余为输入模式
+
+    if (currentCycle >= config_.startDetectionNum &&
+        currentCycle < config_.startDetectionNum + config_.num) {
+
+        // 计算当前应该输出高电平的引脚
+        uint8_t activePin = currentCycle - config_.startDetectionNum;
+
+        // 配置所有引脚
+        for (uint8_t pin = 0; pin < config_.num; pin++) {
+            if (pin == activePin) {
+                // 设置为输出模式并输出高电平
+                HAL::GpioConfig gpioConfig(pin, HAL::GpioMode::OUTPUT,
+                                           HAL::GpioState::HIGH);
+                gpio_->init(gpioConfig);
+                gpio_->write(pin, HAL::GpioState::HIGH);
+            } else {
+                // 设置为输入下拉模式
+                HAL::GpioConfig gpioConfig(pin, HAL::GpioMode::INPUT_PULLDOWN);
+                gpio_->init(gpioConfig);
+            }
+        }
+    } else {
+        // 在检测范围外，所有引脚都设置为输入下拉模式
+        for (uint8_t pin = 0; pin < config_.num; pin++) {
+            HAL::GpioConfig gpioConfig(pin, HAL::GpioMode::INPUT_PULLDOWN);
+            gpio_->init(gpioConfig);
+        }
+    }
 }
 
 // 工厂类实现

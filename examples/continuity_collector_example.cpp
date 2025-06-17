@@ -54,8 +54,10 @@ int main() {
 
         // 配置采集参数
         CollectorConfig config;
-        config.num = 8;        // 检测8个引脚
-        config.interval = 200; // 200ms间隔
+        config.num = 4;               // 检测4个引脚
+        config.startDetectionNum = 2; // 从第2个周期开始检测
+        config.totalDetectionNum = 8; // 总共8个周期
+        config.interval = 200;        // 200ms间隔
         config.autoStart = false;
 
         if (!collector->configure(config)) {
@@ -65,8 +67,11 @@ int main() {
 
         std::cout << "导通数据采集器配置完成:\n";
         std::cout << "- 检测引脚数量: " << static_cast<int>(config.num) << "\n";
-        std::cout << "- 采集间隔: " << config.interval << "ms\n";
-        std::cout << "- 总共周期数: " << static_cast<int>(config.num) << "\n\n";
+        std::cout << "- 开始检测周期: "
+                  << static_cast<int>(config.startDetectionNum) << "\n";
+        std::cout << "- 总检测周期数: "
+                  << static_cast<int>(config.totalDetectionNum) << "\n";
+        std::cout << "- 采集间隔: " << config.interval << "ms\n\n";
 
         // 设置进度回调
         collector->setProgressCallback(progressCallback);
@@ -91,6 +96,29 @@ int main() {
 
         auto dataMatrix = collector->getDataMatrix();
         printMatrix(dataMatrix, "基本采集结果");
+
+        // 测试新的压缩数据向量功能
+        std::cout << "\n=== 测试压缩数据向量 ===\n";
+        auto compressedData = collector->getDataVector();
+        std::cout << "压缩数据大小: " << compressedData.size() << " 字节\n";
+        std::cout << "原始矩阵大小: " << dataMatrix.size() << "x"
+                  << (dataMatrix.empty() ? 0 : dataMatrix[0].size()) << " = "
+                  << (dataMatrix.size() *
+                      (dataMatrix.empty() ? 0 : dataMatrix[0].size()))
+                  << " 位\n";
+        std::cout << "压缩比: "
+                  << (compressedData.size() * 8.0) /
+                         (dataMatrix.size() *
+                          (dataMatrix.empty() ? 0 : dataMatrix[0].size())) *
+                         100.0
+                  << "%\n";
+
+        std::cout << "压缩数据 (十六进制): ";
+        for (size_t i = 0; i < compressedData.size(); i++) {
+            std::cout << std::hex << std::setw(2) << std::setfill('0')
+                      << static_cast<int>(compressedData[i]) << " ";
+        }
+        std::cout << std::dec << "\n\n";
 
         // 打印统计信息
         auto stats = collector->calculateStatistics();

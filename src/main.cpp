@@ -211,7 +211,8 @@ class UdpProtocolTester {
                     createWithVirtualGpio();
 
                 // 配置采集
-                Adapter::CollectorConfig config(8, 200); // 8引脚, 200ms间隔
+                Adapter::CollectorConfig config(
+                    2, 0, 4, 20); // 2引脚, 从周期0开始, 总共4周期, 20ms间隔
                 collector->configure(config);
 
                 // 开始采集
@@ -221,17 +222,8 @@ class UdpProtocolTester {
                 while (!collector->isCollectionComplete()) {
                     std::this_thread::sleep_for(std::chrono::milliseconds(100));
                 }
-                auto matrix = collector->getDataMatrix();
-
-                // 将数据转换为协议格式
-                for (const auto &row : matrix) {
-                    for (const auto &state : row) {
-                        response->conductionData.push_back(
-                            static_cast<uint8_t>(state));
-                    }
-                }
-
-                response->conductionLength = matrix.size();
+                response->conductionData = collector->getDataVector();
+                response->conductionLength = response->conductionData.size();
                 return std::move(response);
             }
 
