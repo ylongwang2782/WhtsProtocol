@@ -24,8 +24,8 @@ set(PROTOCOL_SOURCES
     ${PROTOCOL_DIR}/messages/Master2Backend.cpp
     ${PROTOCOL_DIR}/messages/Slave2Backend.cpp
     
-    # 协议处理器 (需要实现)
-    # ${PROTOCOL_DIR}/ProtocolProcessor.cpp
+    # 协议处理器
+    ${PROTOCOL_DIR}/ProtocolProcessor.cpp
     
     # 兼容性：保留原始文件
     ${SRC_DIR}/WhtsProtocol.cpp
@@ -43,6 +43,7 @@ set(PROTOCOL_HEADERS
     ${PROTOCOL_DIR}/messages/Slave2Backend.h
     ${PROTOCOL_DIR}/messages/Backend2Master.h
     ${PROTOCOL_DIR}/messages/Master2Backend.h
+    ${PROTOCOL_DIR}/ProtocolProcessor.h
     ${PROTOCOL_DIR}/WhtsProtocol.h
 )
 

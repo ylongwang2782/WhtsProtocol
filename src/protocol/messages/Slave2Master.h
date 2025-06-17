@@ -4,7 +4,6 @@
 #include "../Common.h"
 #include "Message.h"
 
-
 namespace WhtsProtocol {
 namespace Slave2Master {
 
@@ -20,7 +19,8 @@ class ConductionConfigResponseMessage : public Message {
     std::vector<uint8_t> serialize() const override;
     bool deserialize(const std::vector<uint8_t> &data) override;
     uint8_t getMessageId() const override {
-        return static_cast<uint8_t>(Slave2MasterMessageId::CONDUCTION_CFG_MSG);
+        return static_cast<uint8_t>(
+            Slave2MasterMessageId::CONDUCTION_CFG_RSP_MSG);
     }
 };
 
@@ -36,7 +36,8 @@ class ResistanceConfigResponseMessage : public Message {
     std::vector<uint8_t> serialize() const override;
     bool deserialize(const std::vector<uint8_t> &data) override;
     uint8_t getMessageId() const override {
-        return static_cast<uint8_t>(Slave2MasterMessageId::RESISTANCE_CFG_MSG);
+        return static_cast<uint8_t>(
+            Slave2MasterMessageId::RESISTANCE_CFG_RSP_MSG);
     }
 };
 
@@ -50,7 +51,7 @@ class ClipConfigResponseMessage : public Message {
     std::vector<uint8_t> serialize() const override;
     bool deserialize(const std::vector<uint8_t> &data) override;
     uint8_t getMessageId() const override {
-        return static_cast<uint8_t>(Slave2MasterMessageId::CLIP_CFG_MSG);
+        return static_cast<uint8_t>(Slave2MasterMessageId::CLIP_CFG_RSP_MSG);
     }
 };
 
@@ -63,7 +64,7 @@ class RstResponseMessage : public Message {
     std::vector<uint8_t> serialize() const override;
     bool deserialize(const std::vector<uint8_t> &data) override;
     uint8_t getMessageId() const override {
-        return static_cast<uint8_t>(Slave2MasterMessageId::RST_MSG);
+        return static_cast<uint8_t>(Slave2MasterMessageId::RST_RSP_MSG);
     }
 };
 

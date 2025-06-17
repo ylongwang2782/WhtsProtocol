@@ -35,10 +35,10 @@ enum class Master2SlaveMessageId : uint8_t {
 
 // Slave2Master Message ID 枚举
 enum class Slave2MasterMessageId : uint8_t {
-    CONDUCTION_CFG_MSG = 0x10,
-    RESISTANCE_CFG_MSG = 0x11,
-    CLIP_CFG_MSG = 0x22,
-    RST_MSG = 0x30,
+    CONDUCTION_CFG_RSP_MSG = 0x10,
+    RESISTANCE_CFG_RSP_MSG = 0x11,
+    CLIP_CFG_RSP_MSG = 0x22,
+    RST_RSP_MSG = 0x30,
     PING_RSP_MSG = 0x41,
     ANNOUNCE_MSG = 0x50,
     SHORT_ID_CONFIRM_MSG = 0x51
@@ -48,7 +48,7 @@ enum class Slave2MasterMessageId : uint8_t {
 enum class Backend2MasterMessageId : uint8_t {
     SLAVE_CFG_MSG = 0x00,
     MODE_CFG_MSG = 0x01,
-    RST_MSG = 0x02,
+    SLAVE_RST_MSG = 0x02,
     CTRL_MSG = 0x03,
     PING_CTRL_MSG = 0x10,
     DEVICE_LIST_REQ_MSG = 0x11

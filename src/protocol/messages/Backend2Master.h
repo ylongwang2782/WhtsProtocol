@@ -53,7 +53,7 @@ class RstMessage : public Message {
     std::vector<uint8_t> serialize() const override;
     bool deserialize(const std::vector<uint8_t> &data) override;
     uint8_t getMessageId() const override {
-        return static_cast<uint8_t>(Backend2MasterMessageId::RST_MSG);
+        return static_cast<uint8_t>(Backend2MasterMessageId::SLAVE_RST_MSG);
     }
 };
 

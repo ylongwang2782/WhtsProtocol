@@ -368,7 +368,7 @@ class UdpProtocolTester {
             break;
         }
 
-        case static_cast<uint8_t>(Backend2MasterMessageId::RST_MSG): {
+        case static_cast<uint8_t>(Backend2MasterMessageId::SLAVE_RST_MSG): {
             auto rstMsg =
                 dynamic_cast<const Backend2Master::RstMessage *>(&request);
             if (rstMsg) {
@@ -584,7 +584,7 @@ class UdpProtocolTester {
                 // Process different types of Slave2Master messages
                 switch (slaveMessage->getMessageId()) {
                 case static_cast<uint8_t>(
-                    Slave2MasterMessageId::CONDUCTION_CFG_MSG): {
+                    Slave2MasterMessageId::CONDUCTION_CFG_RSP_MSG): {
                     auto condConfigRspMsg = dynamic_cast<
                         const Slave2Master::ConductionConfigResponseMessage *>(
                         slaveMessage.get());
@@ -606,7 +606,7 @@ class UdpProtocolTester {
                     break;
                 }
                 case static_cast<uint8_t>(
-                    Slave2MasterMessageId::RESISTANCE_CFG_MSG): {
+                    Slave2MasterMessageId::RESISTANCE_CFG_RSP_MSG): {
                     auto resConfigRspMsg = dynamic_cast<
                         const Slave2Master::ResistanceConfigResponseMessage *>(
                         slaveMessage.get());
@@ -628,7 +628,7 @@ class UdpProtocolTester {
                     break;
                 }
                 case static_cast<uint8_t>(
-                    Slave2MasterMessageId::CLIP_CFG_MSG): {
+                    Slave2MasterMessageId::CLIP_CFG_RSP_MSG): {
                     auto clipConfigRspMsg = dynamic_cast<
                         const Slave2Master::ClipConfigResponseMessage *>(
                         slaveMessage.get());
@@ -645,7 +645,7 @@ class UdpProtocolTester {
                     }
                     break;
                 }
-                case static_cast<uint8_t>(Slave2MasterMessageId::RST_MSG): {
+                case static_cast<uint8_t>(Slave2MasterMessageId::RST_RSP_MSG): {
                     auto rstRspMsg =
                         dynamic_cast<const Slave2Master::RstResponseMessage *>(
                             slaveMessage.get());

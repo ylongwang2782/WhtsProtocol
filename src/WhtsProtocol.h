@@ -46,10 +46,10 @@ enum class Master2SlaveMessageId : uint8_t {
 
 // Slave2Master Message ID 枚举
 enum class Slave2MasterMessageId : uint8_t {
-    CONDUCTION_CFG_MSG = 0x10,
-    RESISTANCE_CFG_MSG = 0x11,
-    CLIP_CFG_MSG = 0x22,
-    RST_MSG = 0x30,
+    CONDUCTION_CFG_RSP_MSG = 0x10,
+    RESISTANCE_CFG_RSP_MSG = 0x11,
+    CLIP_CFG_RSP_MSG = 0x22,
+    RST_RSP_MSG = 0x30,
     PING_RSP_MSG = 0x41,
     ANNOUNCE_MSG = 0x50,
     SHORT_ID_CONFIRM_MSG = 0x51
@@ -59,7 +59,7 @@ enum class Slave2MasterMessageId : uint8_t {
 enum class Backend2MasterMessageId : uint8_t {
     SLAVE_CFG_MSG = 0x00,
     MODE_CFG_MSG = 0x01,
-    RST_MSG = 0x02,
+    SLAVE_RST_MSG = 0x02,
     CTRL_MSG = 0x03,
     PING_CTRL_MSG = 0x10,
     DEVICE_LIST_REQ_MSG = 0x11
@@ -267,7 +267,8 @@ class ConductionConfigResponseMessage : public Message {
     std::vector<uint8_t> serialize() const override;
     bool deserialize(const std::vector<uint8_t> &data) override;
     uint8_t getMessageId() const override {
-        return static_cast<uint8_t>(Slave2MasterMessageId::CONDUCTION_CFG_MSG);
+        return static_cast<uint8_t>(
+            Slave2MasterMessageId::CONDUCTION_CFG_RSP_MSG);
     }
 };
 
@@ -283,7 +284,8 @@ class ResistanceConfigResponseMessage : public Message {
     std::vector<uint8_t> serialize() const override;
     bool deserialize(const std::vector<uint8_t> &data) override;
     uint8_t getMessageId() const override {
-        return static_cast<uint8_t>(Slave2MasterMessageId::RESISTANCE_CFG_MSG);
+        return static_cast<uint8_t>(
+            Slave2MasterMessageId::RESISTANCE_CFG_RSP_MSG);
     }
 };
 
@@ -297,7 +299,7 @@ class ClipConfigResponseMessage : public Message {
     std::vector<uint8_t> serialize() const override;
     bool deserialize(const std::vector<uint8_t> &data) override;
     uint8_t getMessageId() const override {
-        return static_cast<uint8_t>(Slave2MasterMessageId::CLIP_CFG_MSG);
+        return static_cast<uint8_t>(Slave2MasterMessageId::CLIP_CFG_RSP_MSG);
     }
 };
 
@@ -310,7 +312,7 @@ class RstResponseMessage : public Message {
     std::vector<uint8_t> serialize() const override;
     bool deserialize(const std::vector<uint8_t> &data) override;
     uint8_t getMessageId() const override {
-        return static_cast<uint8_t>(Slave2MasterMessageId::RST_MSG);
+        return static_cast<uint8_t>(Slave2MasterMessageId::RST_RSP_MSG);
     }
 };
 
@@ -445,7 +447,7 @@ class RstMessage : public Message {
     std::vector<uint8_t> serialize() const override;
     bool deserialize(const std::vector<uint8_t> &data) override;
     uint8_t getMessageId() const override {
-        return static_cast<uint8_t>(Backend2MasterMessageId::RST_MSG);
+        return static_cast<uint8_t>(Backend2MasterMessageId::SLAVE_RST_MSG);
     }
 };
 
