@@ -143,8 +143,11 @@ main.exe
 ### 2024年12月更新
 
 1. **头文件重组**: `WhtsProtocol.h` 已移动到 `src/protocol/` 目录下
-2. **移除安装规则**: 根据需求，所有 CMakeLists.txt 文件中的安装指令已被移除
-3. **包含路径更新**: main.cpp 中的包含路径已更新为：
+2. **移除安装规则**: 根据需求，所有 CMakeLists.txt 文件中的安装指令已被移除  
+3. **修复重复定义**: 解决了 ProtocolProcessor 在两个头文件中重复定义的问题
+   - `src/protocol/ProtocolProcessor.h` - 完整的类定义
+   - `src/protocol/WhtsProtocol.h` - 简洁的包含头文件（仅包含 #include 指令）
+4. **包含路径更新**: main.cpp 中的包含路径已更新为：
    - `#include "logger/Logger.h"`
    - `#include "protocol/WhtsProtocol.h"`
 
