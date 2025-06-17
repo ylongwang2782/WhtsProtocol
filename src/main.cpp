@@ -1,3 +1,4 @@
+#include "Adapter/ContinuityCollector.h"
 #include "logger/Logger.h"
 #include "protocol/WhtsProtocol.h"
 #include <algorithm>
@@ -112,7 +113,7 @@ class UdpProtocolTester {
     }
 
     // Process Master2Slave messages and generate responses
-    std::unique_ptr<Message> processAndCreateResponse(uint32_t slaveId,
+    std::unique_ptr<Message> processAndCreateResponse(uint32_t /* slaveId */,
                                                       const Message &request) {
         switch (request.getMessageId()) {
         case static_cast<uint8_t>(Master2SlaveMessageId::SYNC_MSG): {
@@ -205,8 +206,32 @@ class UdpProtocolTester {
 
                 auto response =
                     std::make_unique<Slave2Backend::ConductionDataMessage>();
-                response->conductionLength = 1;
-                response->conductionData = {0x90};
+                // 创建采集器
+                auto collector = Adapter::ContinuityCollectorFactory::
+                    createWithVirtualGpio();
+
+                // 配置采集
+                Adapter::CollectorConfig config(8, 200); // 8引脚, 200ms间隔
+                collector->configure(config);
+
+                // 开始采集
+                collector->startCollection();
+
+                // 等待完成并获取数据
+                while (!collector->isCollectionComplete()) {
+                    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                }
+                auto matrix = collector->getDataMatrix();
+
+                // 将数据转换为协议格式
+                for (const auto &row : matrix) {
+                    for (const auto &state : row) {
+                        response->conductionData.push_back(
+                            static_cast<uint8_t>(state));
+                    }
+                }
+
+                response->conductionLength = matrix.size();
                 return std::move(response);
             }
 
@@ -521,7 +546,18 @@ class UdpProtocolTester {
 
                 // Simulate slave ID
                 uint32_t slaveId = 0x12345678;
-                DeviceStatus deviceStatus = {0};
+                DeviceStatus deviceStatus = {};
+                // 初始化所有字段为false/0
+                deviceStatus.colorSensor = false;
+                deviceStatus.sleeveLimit = false;
+                deviceStatus.electromagnetUnlockButton = false;
+                deviceStatus.batteryLowAlarm = false;
+                deviceStatus.pressureSensor = false;
+                deviceStatus.electromagneticLock1 = false;
+                deviceStatus.electromagneticLock2 = false;
+                deviceStatus.accessory1 = false;
+                deviceStatus.accessory2 = false;
+                deviceStatus.reserved = 0;
 
                 // Process message and generate response
                 auto response = processAndCreateResponse(slaveId, *message);

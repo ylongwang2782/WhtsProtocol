@@ -3,6 +3,12 @@
 # Logger module
 add_subdirectory(logger)
 
+# HAL module
+add_subdirectory(HAL)
+
+# Adapter module
+add_subdirectory(Adapter)
+
 # Protocol module
 add_subdirectory(protocol)
 
@@ -14,6 +20,8 @@ target_link_libraries(main
     PRIVATE
     WhtsProtocol 
     Logger
+    HAL
+    Adapter
 )
 
 # Set include directories for main
