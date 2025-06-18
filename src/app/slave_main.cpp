@@ -76,20 +76,6 @@ class SlaveDevice {
 #endif
     }
 
-    // Convert a hexadecimal string to a byte array
-    std::vector<uint8_t> hexStringToBytes(const std::string &hex) {
-        std::vector<uint8_t> bytes;
-        for (size_t i = 0; i < hex.length(); i += 2) {
-            if (i + 1 < hex.length()) {
-                std::string byteString = hex.substr(i, 2);
-                uint8_t byte = static_cast<uint8_t>(
-                    strtol(byteString.c_str(), nullptr, 16));
-                bytes.push_back(byte);
-            }
-        }
-        return bytes;
-    }
-
     // Get the current timestamp
     uint32_t getCurrentTimestamp() {
         return static_cast<uint32_t>(
@@ -183,7 +169,7 @@ class SlaveDevice {
         }
 
         case static_cast<uint8_t>(Master2SlaveMessageId::READ_COND_DATA_MSG): {
-            auto readCondDataMsg =
+            const auto *readCondDataMsg =
                 dynamic_cast<const Master2Slave::ReadConductionDataMessage *>(
                     &request);
             if (readCondDataMsg) {
@@ -216,7 +202,7 @@ class SlaveDevice {
         }
 
         case static_cast<uint8_t>(Master2SlaveMessageId::READ_RES_DATA_MSG): {
-            auto readCondDataMsg =
+            const auto *readCondDataMsg =
                 dynamic_cast<const Master2Slave::ReadResistanceDataMessage *>(
                     &request);
             if (readCondDataMsg) {
@@ -232,7 +218,7 @@ class SlaveDevice {
         }
 
         case static_cast<uint8_t>(Master2SlaveMessageId::READ_CLIP_DATA_MSG): {
-            auto readCondDataMsg =
+            const auto *readCondDataMsg =
                 dynamic_cast<const Master2Slave::ReadClipDataMessage *>(
                     &request);
             if (readCondDataMsg) {
@@ -247,7 +233,7 @@ class SlaveDevice {
         }
 
         case static_cast<uint8_t>(Master2SlaveMessageId::PING_REQ_MSG): {
-            auto pingMsg =
+            const auto *pingMsg =
                 dynamic_cast<const Master2Slave::PingReqMessage *>(&request);
             if (pingMsg) {
                 Log::i("MessageProcessor",
@@ -265,7 +251,7 @@ class SlaveDevice {
         }
 
         case static_cast<uint8_t>(Master2SlaveMessageId::RST_MSG): {
-            auto rstMsg =
+            const auto *rstMsg =
                 dynamic_cast<const Master2Slave::RstMessage *>(&request);
             if (rstMsg) {
                 Log::i("MessageProcessor",
@@ -283,7 +269,7 @@ class SlaveDevice {
         }
 
         case static_cast<uint8_t>(Master2SlaveMessageId::SHORT_ID_ASSIGN_MSG): {
-            auto assignMsg =
+            const auto *assignMsg =
                 dynamic_cast<const Master2Slave::ShortIdAssignMessage *>(
                     &request);
             if (assignMsg) {
