@@ -1,6 +1,6 @@
-#include "Adapter/ContinuityCollector.h"
-#include "logger/Logger.h"
-#include "protocol/WhtsProtocol.h"
+#include "ContinuityCollector.h"
+#include "Logger.h"
+#include "WhtsProtocol.h"
 #include <algorithm>
 #include <chrono>
 #include <iomanip>
