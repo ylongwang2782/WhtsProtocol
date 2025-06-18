@@ -1,4 +1,5 @@
 #include "ContinuityCollector.h"
+#include "../HAL/GpioFactory.h"
 #include <algorithm>
 #include <iomanip>
 #include <map>
@@ -282,7 +283,7 @@ ContinuityCollector::calculateStatistics() const {
     std::sort(sortedPins.begin(), sortedPins.end(),
               [](const auto &a, const auto &b) { return a.second > b.second; });
 
-    for (int i = 0; i < 5 && i < sortedPins.size(); i++) {
+    for (size_t i = 0; i < 5 && i < sortedPins.size(); i++) {
         stats.mostActivePins[i] = sortedPins[i].first;
     }
 

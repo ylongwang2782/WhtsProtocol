@@ -2,8 +2,16 @@
 
 # HAL library - 硬件抽象层库
 add_library(HAL STATIC
-    Gpio.cpp
-    Gpio.h
+    # GPIO模块文件
+    Gpio.cpp              # 统一包含文件（向后兼容）
+    Gpio.h                # 统一头文件
+    IGpio.h               # GPIO接口定义
+    VirtualGpio.cpp       # 虚拟GPIO实现
+    VirtualGpio.h         # 虚拟GPIO头文件
+    HardwareGpio.cpp      # 硬件GPIO实现模板
+    HardwareGpio.h        # 硬件GPIO头文件
+    GpioFactory.cpp       # GPIO工厂实现
+    GpioFactory.h         # GPIO工厂头文件
 )
 
 # 设置目标属性

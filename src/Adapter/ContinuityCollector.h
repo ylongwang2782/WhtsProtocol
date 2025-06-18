@@ -1,7 +1,8 @@
 #ifndef CONTINUITY_COLLECTOR_H
 #define CONTINUITY_COLLECTOR_H
 
-#include "../HAL/Gpio.h"
+#include "../HAL/IGpio.h"
+#include "../HAL/VirtualGpio.h"
 #include <atomic>
 #include <chrono>
 #include <functional>
