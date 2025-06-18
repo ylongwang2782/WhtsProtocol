@@ -4,8 +4,10 @@
 #include <algorithm>
 #include <chrono>
 #include <iomanip>
+#include <memory>
 #include <sstream>
 #include <string>
+#include <thread>
 #include <vector>
 
 #ifdef _WIN32
@@ -36,10 +38,11 @@ class SlaveDevice {
     uint16_t port;
     uint32_t deviceId;
     std::unique_ptr<Adapter::ContinuityCollector> continuityCollector;
+    bool running;
 
   public:
-    SlaveDevice(uint16_t listenPort = 8081, uint32_t id = 0x3732485B)
-        : port(listenPort), deviceId(id) {
+    SlaveDevice(uint16_t listenPort, uint32_t id)
+        : port(listenPort), deviceId(id), running(false) {
 #ifdef _WIN32
         WSADATA wsaData;
         if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0) {
@@ -57,7 +60,17 @@ class SlaveDevice {
         int broadcast = 1;
         if (setsockopt(sock, SOL_SOCKET, SO_BROADCAST, (char *)&broadcast,
                        sizeof(broadcast)) == SOCKET_ERROR) {
-            Log::w("Slave", "Failed to enable broadcast option");
+            Log::w("Slave",
+                   "Failed to enable broadcast option for device 0x%08X",
+                   deviceId);
+        }
+
+        // Allow address reuse for multiple slaves on same port
+        int reuse = 1;
+        if (setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, (char *)&reuse,
+                       sizeof(reuse)) == SOCKET_ERROR) {
+            Log::w("Slave", "Failed to enable address reuse for device 0x%08X",
+                   deviceId);
         }
 
         // Configure server address (Slave listens on port 8081 for broadcasts)
@@ -74,7 +87,8 @@ class SlaveDevice {
         if (bind(sock, (sockaddr *)&serverAddr, sizeof(serverAddr)) ==
             SOCKET_ERROR) {
             closesocket(sock);
-            throw std::runtime_error("Bind failed");
+            throw std::runtime_error("Bind failed for device " +
+                                     std::to_string(deviceId));
         }
 
         // Initialize continuity collector with virtual GPIO
@@ -88,6 +102,7 @@ class SlaveDevice {
     }
 
     ~SlaveDevice() {
+        running = false;
         closesocket(sock);
 #ifdef _WIN32
         WSACleanup();
@@ -106,26 +121,28 @@ class SlaveDevice {
     std::unique_ptr<Message> processAndCreateResponse(const Message &request) {
         switch (request.getMessageId()) {
         case static_cast<uint8_t>(Master2SlaveMessageId::SYNC_MSG): {
-            auto syncMsg =
+            const auto *syncMsg =
                 dynamic_cast<const Master2Slave::SyncMessage *>(&request);
             if (syncMsg) {
                 Log::i("MessageProcessor",
-                       "Processing sync message - Mode: %d, Timestamp: %u",
-                       static_cast<int>(syncMsg->mode), syncMsg->timestamp);
-                return nullptr;
+                       "[0x%08X] Processing sync message - Mode: %d, "
+                       "Timestamp: %u",
+                       deviceId, static_cast<int>(syncMsg->mode),
+                       syncMsg->timestamp);
+                // Sync messages typically don't have responses
             }
             break;
         }
 
         case static_cast<uint8_t>(Master2SlaveMessageId::CONDUCTION_CFG_MSG): {
-            auto configMsg =
+            const auto *configMsg =
                 dynamic_cast<const Master2Slave::ConductionConfigMessage *>(
                     &request);
             if (configMsg) {
                 Log::i("MessageProcessor",
-                       "Processing conduction configuration - Time slot: %d, "
-                       "Interval: %dms",
-                       static_cast<int>(configMsg->timeSlot),
+                       "[0x%08X] Processing conduction configuration - Time "
+                       "slot: %d, Interval: %dms",
+                       deviceId, static_cast<int>(configMsg->timeSlot),
                        static_cast<int>(configMsg->interval));
 
                 auto response = std::make_unique<
@@ -142,14 +159,14 @@ class SlaveDevice {
         }
 
         case static_cast<uint8_t>(Master2SlaveMessageId::RESISTANCE_CFG_MSG): {
-            auto configMsg =
+            const auto *configMsg =
                 dynamic_cast<const Master2Slave::ResistanceConfigMessage *>(
                     &request);
             if (configMsg) {
                 Log::i("MessageProcessor",
-                       "Processing resistance configuration - Time slot: %d, "
-                       "Interval: %dms",
-                       static_cast<int>(configMsg->timeSlot),
+                       "[0x%08X] Processing resistance configuration - Time "
+                       "slot: %d, Interval: %dms",
+                       deviceId, static_cast<int>(configMsg->timeSlot),
                        static_cast<int>(configMsg->interval));
 
                 auto response = std::make_unique<
@@ -166,14 +183,14 @@ class SlaveDevice {
         }
 
         case static_cast<uint8_t>(Master2SlaveMessageId::CLIP_CFG_MSG): {
-            auto configMsg =
+            const auto *configMsg =
                 dynamic_cast<const Master2Slave::ClipConfigMessage *>(&request);
             if (configMsg) {
-                Log::i(
-                    "MessageProcessor",
-                    "Processing clip configuration - Interval: %dms, Mode: %d",
-                    static_cast<int>(configMsg->interval),
-                    static_cast<int>(configMsg->mode));
+                Log::i("MessageProcessor",
+                       "[0x%08X] Processing clip configuration - Interval: "
+                       "%dms, Mode: %d",
+                       deviceId, static_cast<int>(configMsg->interval),
+                       static_cast<int>(configMsg->mode));
 
                 auto response =
                     std::make_unique<Slave2Master::ClipConfigResponseMessage>();
@@ -186,78 +203,14 @@ class SlaveDevice {
             break;
         }
 
-        case static_cast<uint8_t>(Master2SlaveMessageId::READ_COND_DATA_MSG): {
-            const auto *readCondDataMsg =
-                dynamic_cast<const Master2Slave::ReadConductionDataMessage *>(
-                    &request);
-            if (readCondDataMsg) {
-                Log::i("MessageProcessor", "Processing read conduction data");
-
-                auto response =
-                    std::make_unique<Slave2Backend::ConductionDataMessage>();
-                // 创建采集器
-                auto collector = Adapter::ContinuityCollectorFactory::
-                    createWithVirtualGpio();
-
-                // 配置采集
-                Adapter::CollectorConfig config(
-                    2, 0, 4, 20); // 2引脚, 从周期0开始, 总共4周期, 20ms间隔
-                collector->configure(config);
-
-                // 开始采集
-                collector->startCollection();
-
-                // 等待完成并获取数据
-                while (!collector->isCollectionComplete()) {
-                    std::this_thread::sleep_for(std::chrono::milliseconds(100));
-                }
-                response->conductionData = collector->getDataVector();
-                response->conductionLength = response->conductionData.size();
-                return std::move(response);
-            }
-
-            break;
-        }
-
-        case static_cast<uint8_t>(Master2SlaveMessageId::READ_RES_DATA_MSG): {
-            const auto *readCondDataMsg =
-                dynamic_cast<const Master2Slave::ReadResistanceDataMessage *>(
-                    &request);
-            if (readCondDataMsg) {
-                Log::i("MessageProcessor", "Processing read conduction data");
-
-                auto response =
-                    std::make_unique<Slave2Backend::ResistanceDataMessage>();
-                response->resistanceLength = 1;
-                response->resistanceData = {0x90};
-                return std::move(response);
-            }
-            break;
-        }
-
-        case static_cast<uint8_t>(Master2SlaveMessageId::READ_CLIP_DATA_MSG): {
-            const auto *readCondDataMsg =
-                dynamic_cast<const Master2Slave::ReadClipDataMessage *>(
-                    &request);
-            if (readCondDataMsg) {
-                Log::i("MessageProcessor", "Processing read conduction data");
-
-                auto response =
-                    std::make_unique<Slave2Backend::ClipDataMessage>();
-                response->clipData = 0xFF;
-                return std::move(response);
-            }
-            break;
-        }
-
         case static_cast<uint8_t>(Master2SlaveMessageId::PING_REQ_MSG): {
             const auto *pingMsg =
                 dynamic_cast<const Master2Slave::PingReqMessage *>(&request);
             if (pingMsg) {
                 Log::i("MessageProcessor",
-                       "Processing Ping request - Sequence number: %d, "
-                       "Timestamp: %u",
-                       pingMsg->sequenceNumber, pingMsg->timestamp);
+                       "[0x%08X] Processing Ping request - Sequence number: "
+                       "%d, Timestamp: %u",
+                       deviceId, pingMsg->sequenceNumber, pingMsg->timestamp);
 
                 auto response =
                     std::make_unique<Slave2Master::PingRspMessage>();
@@ -273,8 +226,8 @@ class SlaveDevice {
                 dynamic_cast<const Master2Slave::RstMessage *>(&request);
             if (rstMsg) {
                 Log::i("MessageProcessor",
-                       "Processing reset message - Lock status: %d",
-                       static_cast<int>(rstMsg->lockStatus));
+                       "[0x%08X] Processing reset message - Lock status: %d",
+                       deviceId, static_cast<int>(rstMsg->lockStatus));
 
                 auto response =
                     std::make_unique<Slave2Master::RstResponseMessage>();
@@ -292,8 +245,8 @@ class SlaveDevice {
                     &request);
             if (assignMsg) {
                 Log::i("MessageProcessor",
-                       "Processing short ID assignment - Short ID: %d",
-                       static_cast<int>(assignMsg->shortId));
+                       "[0x%08X] Processing short ID assignment - Short ID: %d",
+                       deviceId, static_cast<int>(assignMsg->shortId));
 
                 auto response =
                     std::make_unique<Slave2Master::ShortIdConfirmMessage>();
@@ -305,8 +258,8 @@ class SlaveDevice {
         }
 
         default:
-            Log::w("MessageProcessor", "Unknown message type: 0x%02X",
-                   static_cast<int>(request.getMessageId()));
+            Log::w("MessageProcessor", "[0x%08X] Unknown message type: 0x%02X",
+                   deviceId, static_cast<int>(request.getMessageId()));
             break;
         }
 
@@ -314,10 +267,11 @@ class SlaveDevice {
     }
 
     // Process received frame
-    void processFrame(Frame &frame, const sockaddr_in &masterAddr) {
-        Log::i("Slave",
-               "Processing frame - PacketId: 0x%02X, payload size: %zu",
-               static_cast<int>(frame.packetId), frame.payload.size());
+    void processFrame(Frame &frame, const sockaddr_in &senderAddr) {
+        Log::i(
+            "Slave",
+            "[0x%08X] Processing frame - PacketId: 0x%02X, payload size: %zu",
+            deviceId, static_cast<int>(frame.packetId), frame.payload.size());
 
         if (frame.packetId == static_cast<uint8_t>(PacketId::MASTER_TO_SLAVE)) {
             uint32_t targetSlaveId;
@@ -329,19 +283,21 @@ class SlaveDevice {
                 if (targetSlaveId == deviceId ||
                     targetSlaveId == BROADCAST_ID) {
                     Log::i("Slave",
-                           "Processing Master2Slave message for device 0x%08X, "
-                           "Message ID: 0x%02X",
-                           targetSlaveId,
+                           "[0x%08X] Processing Master2Slave message for "
+                           "device 0x%08X, Message ID: 0x%02X",
+                           deviceId, targetSlaveId,
                            static_cast<int>(masterMessage->getMessageId()));
 
                     // Process message and create response
                     auto response = processAndCreateResponse(*masterMessage);
 
                     if (response) {
-                        Log::i("Slave", "Generated response message");
+                        Log::i("Slave", "[0x%08X] Generated response message",
+                               deviceId);
 
                         std::vector<std::vector<uint8_t>> responseData;
                         DeviceStatus deviceStatus = {};
+
                         if (response->getMessageId() ==
                                 static_cast<uint8_t>(Slave2BackendMessageId::
                                                          CONDUCTION_DATA_MSG) ||
@@ -352,7 +308,8 @@ class SlaveDevice {
                                 static_cast<uint8_t>(
                                     Slave2BackendMessageId::CLIP_DATA_MSG)) {
                             Log::i("ResponseSender",
-                                   "Packing Slave2Backend message");
+                                   "[0x%08X] Packing Slave2Backend message",
+                                   deviceId);
                             responseData = processor.packSlave2BackendMessage(
                                 deviceId, deviceStatus, *response);
                         } else {
@@ -360,12 +317,11 @@ class SlaveDevice {
                                 deviceId, *response);
                         }
 
-                        Log::i("ResponseSender", "Sending response:");
+                        Log::i("ResponseSender",
+                               "[0x%08X] Sending response:", deviceId);
 
                         // Send all fragments
                         for (const auto &fragment : responseData) {
-                            // printBytes(fragment, "Response data");
-                            // Send response
                             // Send response to master on port 8080
                             sendto(
                                 sock,
@@ -377,35 +333,39 @@ class SlaveDevice {
                     }
                 } else {
                     Log::d("Slave",
-                           "Message not for this device (target: 0x%08X, our "
-                           "ID: 0x%08X)",
-                           targetSlaveId, deviceId);
+                           "[0x%08X] Message not for this device (target: "
+                           "0x%08X, our ID: 0x%08X)",
+                           deviceId, targetSlaveId, deviceId);
                 }
             } else {
-                Log::e("Slave", "Failed to parse Master2Slave packet");
+                Log::e("Slave", "[0x%08X] Failed to parse Master2Slave packet",
+                       deviceId);
             }
         } else {
-            Log::w("Slave", "Unsupported packet type for Slave: 0x%02X",
-                   static_cast<int>(frame.packetId));
+            Log::w("Slave",
+                   "[0x%08X] Unsupported packet type for Slave: 0x%02X",
+                   deviceId, static_cast<int>(frame.packetId));
         }
     }
 
     // Main loop
     void run() {
-        Log::i("Slave", "Slave device started");
-        Log::i("Slave", "Device ID: 0x%08X, listening on port %d", deviceId,
-               port);
-        Log::i("Slave", "Handling Master2Slave broadcast packets");
-        Log::i("Slave", "Sending responses to Master on port 8080");
+        running = true;
+        Log::i("Slave", "[0x%08X] Slave device started", deviceId);
+        Log::i("Slave", "[0x%08X] Device ID: 0x%08X, listening on port %d",
+               deviceId, deviceId, port);
+        Log::i("Slave", "[0x%08X] Handling Master2Slave broadcast packets",
+               deviceId);
+        Log::i("Slave", "[0x%08X] Sending responses to Master on port 8080",
+               deviceId);
 
         char buffer[1024];
-        sockaddr_in
-            senderAddr; // Renamed to avoid confusion with member masterAddr
+        sockaddr_in senderAddr;
         socklen_t senderAddrLen = sizeof(senderAddr);
 
         processor.setMTU(100);
 
-        while (true) {
+        while (running) {
             int bytesReceived =
                 recvfrom(sock, buffer, sizeof(buffer), 0,
                          (sockaddr *)&senderAddr, &senderAddrLen);
@@ -421,11 +381,76 @@ class SlaveDevice {
             }
         }
     }
+
+    void stop() { running = false; }
+};
+
+// Multi-slave launcher
+class MultiSlaveManager {
+  private:
+    std::vector<std::unique_ptr<SlaveDevice>> slaves;
+    std::vector<std::thread> slaveThreads;
+    bool running;
+
+  public:
+    MultiSlaveManager() : running(false) {}
+
+    ~MultiSlaveManager() { stop(); }
+
+    void addSlave(uint32_t deviceId) {
+        try {
+            auto slave = std::make_unique<SlaveDevice>(8081, deviceId);
+            slaves.push_back(std::move(slave));
+            Log::i("MultiSlave", "Added slave device 0x%08X", deviceId);
+        } catch (const std::exception &e) {
+            Log::e("MultiSlave", "Failed to create slave 0x%08X: %s", deviceId,
+                   e.what());
+        }
+    }
+
+    void start() {
+        running = true;
+        Log::i("MultiSlave", "Starting %zu slave devices...", slaves.size());
+
+        for (auto &slave : slaves) {
+            slaveThreads.emplace_back([&slave]() { slave->run(); });
+        }
+
+        Log::i("MultiSlave", "All slave devices started");
+    }
+
+    void stop() {
+        if (!running)
+            return;
+
+        running = false;
+        Log::i("MultiSlave", "Stopping all slave devices...");
+
+        for (auto &slave : slaves) {
+            slave->stop();
+        }
+
+        for (auto &thread : slaveThreads) {
+            if (thread.joinable()) {
+                thread.join();
+            }
+        }
+
+        Log::i("MultiSlave", "All slave devices stopped");
+    }
+
+    void waitForAll() {
+        for (auto &thread : slaveThreads) {
+            if (thread.joinable()) {
+                thread.join();
+            }
+        }
+    }
 };
 
 int main() {
-    Log::i("Main", "WhtsProtocol Slave Device");
-    Log::i("Main", "=========================");
+    Log::i("Main", "WhtsProtocol Multi-Slave Device Simulator");
+    Log::i("Main", "==========================================");
     Log::i("Main", "Port Configuration (Wireless Broadcast Simulation):");
     Log::i("Main", "  Backend: 8079");
     Log::i("Main", "  Master:  8080 (receives responses from Slaves)");
@@ -435,8 +460,20 @@ int main() {
     Log::i("Main", "  Sends: Unicast responses to Master");
 
     try {
-        SlaveDevice device(8081, 0x3732485B);
-        device.run();
+        MultiSlaveManager manager;
+
+        // Add multiple slave devices with different IDs
+        manager.addSlave(0x3732485B); // Original slave ID
+        manager.addSlave(0x3732485C); // Slave 2
+        manager.addSlave(0x3732485D); // Slave 3
+        manager.addSlave(0x3732485E); // Slave 4
+
+        Log::i("Main", "Starting multi-slave simulation...");
+        manager.start();
+
+        Log::i("Main", "Multi-slave simulation running. Press Ctrl+C to exit");
+        manager.waitForAll();
+
     } catch (const std::exception &e) {
         Log::e("Main", "Error: %s", e.what());
         return 1;

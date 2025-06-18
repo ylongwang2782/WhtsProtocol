@@ -162,8 +162,8 @@ class MasterServer {
   private:
     SOCKET sock;
     sockaddr_in serverAddr;
-    sockaddr_in backendAddr; // Backend address (port 8079)
-    sockaddr_in slaveAddr;   // Slave address (port 8081)
+    sockaddr_in backendAddr;        // Backend address (port 8079)
+    sockaddr_in slaveBroadcastAddr; // Slave broadcast address (port 8081)
     ProtocolProcessor processor;
     uint16_t port;
     DeviceManager deviceManager;
@@ -673,6 +673,13 @@ MasterServer::MasterServer(uint16_t listenPort) : port(listenPort) {
         throw std::runtime_error("Socket creation failed");
     }
 
+    // Enable broadcast for the socket (to simulate wireless broadcast)
+    int broadcast = 1;
+    if (setsockopt(sock, SOL_SOCKET, SO_BROADCAST, (char *)&broadcast,
+                   sizeof(broadcast)) == SOCKET_ERROR) {
+        Log::w("Master", "Failed to enable broadcast option");
+    }
+
     // Configure server address (Master listens on port 8080)
     serverAddr.sin_family = AF_INET;
     serverAddr.sin_addr.s_addr = INADDR_ANY;
@@ -683,10 +690,12 @@ MasterServer::MasterServer(uint16_t listenPort) : port(listenPort) {
     backendAddr.sin_addr.s_addr = inet_addr("127.0.0.1"); // localhost
     backendAddr.sin_port = htons(8079);
 
-    // Configure slave address (Slaves use port 8081)
-    slaveAddr.sin_family = AF_INET;
-    slaveAddr.sin_addr.s_addr = inet_addr("127.0.0.1"); // localhost
-    slaveAddr.sin_port = htons(8081);
+    // Configure slave broadcast address (Broadcast to all slaves on port 8081)
+    // Using localhost broadcast for simulation
+    slaveBroadcastAddr.sin_family = AF_INET;
+    slaveBroadcastAddr.sin_addr.s_addr =
+        inet_addr("127.255.255.255"); // Local broadcast
+    slaveBroadcastAddr.sin_port = htons(8081);
 
     if (bind(sock, (sockaddr *)&serverAddr, sizeof(serverAddr)) ==
         SOCKET_ERROR) {
@@ -697,7 +706,8 @@ MasterServer::MasterServer(uint16_t listenPort) : port(listenPort) {
     initializeMessageHandlers();
     Log::i("Master", "Master server listening on port %d", port);
     Log::i("Master", "Backend communication port: 8079");
-    Log::i("Master", "Slave communication port: 8081");
+    Log::i("Master", "Slave broadcast communication port: 8081");
+    Log::i("Master", "Wireless broadcast simulation enabled");
 }
 
 MasterServer::~MasterServer() {
@@ -799,18 +809,19 @@ void MasterServer::sendCommandToSlave(uint32_t slaveId,
         return;
 
     auto commandData = processor.packMaster2SlaveMessage(slaveId, *command);
-    Log::i("Master",
-           "Sending Master2Slave command to 0x%08X via port 8081:", slaveId);
+    Log::i(
+        "Master",
+        "Broadcasting Master2Slave command to 0x%08X via port 8081:", slaveId);
 
     for (const auto &fragment : commandData) {
         printBytes(fragment, "Master2Slave command data");
         // Send to slaves on port 8081
         sendto(sock, reinterpret_cast<const char *>(fragment.data()),
-               static_cast<int>(fragment.size()), 0, (sockaddr *)&slaveAddr,
-               sizeof(slaveAddr));
+               static_cast<int>(fragment.size()), 0,
+               (sockaddr *)&slaveBroadcastAddr, sizeof(slaveBroadcastAddr));
     }
 
-    Log::i("Master", "Master2Slave command sent to slaves (port 8081)");
+    Log::i("Master", "Master2Slave command broadcasted to slaves (port 8081)");
 }
 
 void MasterServer::sendCommandToSlaveWithRetry(uint32_t slaveId,
@@ -1092,7 +1103,7 @@ void MasterServer::run() {
            "Listening on port %d for Backend2Master and Slave2Master packets",
            port);
     Log::i("Master", "Sending responses to Backend on port 8079");
-    Log::i("Master", "Sending commands to Slaves on port 8081");
+    Log::i("Master", "Broadcasting commands to Slaves on port 8081");
     Log::i("Master", "Press Ctrl+C to exit");
 
     char buffer[1024];
@@ -1153,10 +1164,15 @@ void MasterServer::run() {
 int main() {
     Log::i("Main", "WhtsProtocol Master Server");
     Log::i("Main", "==========================");
-    Log::i("Main", "Port Configuration:");
+    Log::i("Main", "Port Configuration (Wireless Broadcast Simulation):");
     Log::i("Main", "  Backend: 8079 (receives responses from Master)");
     Log::i("Main", "  Master:  8080 (listens for Backend & Slave messages)");
-    Log::i("Main", "  Slave:   8081 (receives commands from Master)");
+    Log::i("Main", "  Slaves:  8081 (receive broadcast commands from Master)");
+    Log::i("Main", "Wireless Communication Simulation:");
+    Log::i("Main",
+           "  Master -> Slaves: UDP Broadcast (simulates wireless broadcast)");
+    Log::i("Main",
+           "  Slaves -> Master: UDP Unicast (simulates wireless response)");
     Log::i("Main", "Handling Backend2Master and Slave2Master packets");
 
     try {
