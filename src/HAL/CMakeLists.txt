@@ -1,5 +1,19 @@
 # HAL (Hardware Abstraction Layer) CMakeLists.txt
 
+# GPIO平台配置选项
+option(GPIO_USE_HARDWARE "Use hardware GPIO implementation" OFF)
+option(GPIO_USE_VIRTUAL "Use virtual GPIO implementation" OFF)
+
+# 如果没有明确指定，默认使用虚拟GPIO
+if(NOT GPIO_USE_HARDWARE AND NOT GPIO_USE_VIRTUAL)
+    set(GPIO_USE_VIRTUAL ON)
+    message(STATUS "GPIO: Using Virtual GPIO (default)")
+elseif(GPIO_USE_HARDWARE)
+    message(STATUS "GPIO: Using Hardware GPIO")
+elseif(GPIO_USE_VIRTUAL)
+    message(STATUS "GPIO: Using Virtual GPIO")
+endif()
+
 # HAL library - 硬件抽象层库
 add_library(HAL STATIC
     # GPIO模块文件
@@ -28,6 +42,15 @@ target_link_libraries(HAL
 
 # 设置编译选项
 target_compile_features(HAL PUBLIC cxx_std_17)
+
+# 根据配置添加编译定义
+if(GPIO_USE_HARDWARE)
+    target_compile_definitions(HAL PUBLIC GPIO_USE_HARDWARE=1)
+endif()
+
+if(GPIO_USE_VIRTUAL)
+    target_compile_definitions(HAL PUBLIC GPIO_USE_VIRTUAL=1)
+endif()
 
 # 设置编译器警告
 if(MSVC)

@@ -9,13 +9,14 @@ namespace HAL {
 // GPIO工厂类
 class GpioFactory {
   public:
-    // 创建虚拟GPIO实例（用于仿真和测试）
-    static std::unique_ptr<IGpio> createVirtualGpio();
+    // 统一的GPIO创建接口 - 根据CMake配置自动选择实现
+    static std::unique_ptr<IGpio> createGpio();
 
-    // 创建硬件GPIO实例（用于真实硬件平台）
+    // 显式创建特定类型的GPIO（用于测试和调试）
+    static std::unique_ptr<IGpio> createVirtualGpio();
     static std::unique_ptr<IGpio> createHardwareGpio();
 
-    // 根据配置创建GPIO实例
+    // 根据配置创建GPIO实例（保留用于特殊需求）
     enum class GpioType {
         VIRTUAL, // 虚拟GPIO
         HARDWARE // 硬件GPIO

@@ -4,6 +4,18 @@
 
 namespace HAL {
 
+// 统一的GPIO创建接口 - 根据CMake配置自动选择实现
+std::unique_ptr<IGpio> GpioFactory::createGpio() {
+#if defined(GPIO_USE_HARDWARE)
+    return createHardwareGpio();
+#elif defined(GPIO_USE_VIRTUAL)
+    return createVirtualGpio();
+#else
+    // 默认使用虚拟GPIO（用于开发和测试）
+    return createVirtualGpio();
+#endif
+}
+
 std::unique_ptr<IGpio> GpioFactory::createVirtualGpio() {
     return std::make_unique<VirtualGpio>();
 }

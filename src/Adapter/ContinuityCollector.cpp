@@ -421,7 +421,8 @@ void ContinuityCollector::configurePinsForCycle(uint8_t currentCycle) {
 // 工厂类实现
 std::unique_ptr<ContinuityCollector>
 ContinuityCollectorFactory::createWithVirtualGpio() {
-    auto gpio = HAL::GpioFactory::createVirtualGpio();
+    // 使用统一接口，平台由CMake配置决定
+    auto gpio = HAL::GpioFactory::createGpio();
     return std::make_unique<ContinuityCollector>(std::move(gpio));
 }
 
