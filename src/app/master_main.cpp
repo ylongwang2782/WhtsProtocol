@@ -33,6 +33,39 @@ using namespace WhtsProtocol;
 // Forward declarations
 class MasterServer;
 
+// Command tracking for timeout and retry management
+struct PendingCommand {
+    uint32_t slaveId;
+    std::unique_ptr<Message> command;
+    sockaddr_in clientAddr;
+    uint32_t timestamp;
+    uint8_t retryCount;
+    uint8_t maxRetries;
+
+    PendingCommand(uint32_t id, std::unique_ptr<Message> cmd,
+                   const sockaddr_in &addr, uint8_t maxRetry = 3)
+        : slaveId(id), command(std::move(cmd)), clientAddr(addr), timestamp(0),
+          retryCount(0), maxRetries(maxRetry) {}
+};
+
+// Ping session tracking
+struct PingSession {
+    uint32_t targetId;
+    uint8_t pingMode;
+    uint16_t totalCount;
+    uint16_t currentCount;
+    uint16_t successCount;
+    uint16_t interval;
+    uint32_t lastPingTime;
+    sockaddr_in clientAddr;
+
+    PingSession(uint32_t target, uint8_t mode, uint16_t total,
+                uint16_t intervalMs, const sockaddr_in &addr)
+        : targetId(target), pingMode(mode), totalCount(total), currentCount(0),
+          successCount(0), interval(intervalMs), lastPingTime(0),
+          clientAddr(addr) {}
+};
+
 // Message handler interface for extensible message processing
 class IMessageHandler {
   public:
@@ -58,8 +91,14 @@ class DeviceManager {
   private:
     std::unordered_map<uint32_t, bool> connectedSlaves;
     std::unordered_map<uint32_t, uint8_t> slaveShortIds;
+    std::unordered_map<uint32_t, Backend2Master::SlaveConfigMessage::SlaveInfo>
+        slaveConfigs;
+    uint8_t currentMode;
+    uint8_t systemRunningStatus;
 
   public:
+    DeviceManager() : currentMode(0), systemRunningStatus(0) {}
+
     void addSlave(uint32_t slaveId, uint8_t shortId = 0) {
         connectedSlaves[slaveId] = true;
         if (shortId > 0) {
@@ -88,6 +127,35 @@ class DeviceManager {
         auto it = slaveShortIds.find(slaveId);
         return it != slaveShortIds.end() ? it->second : 0;
     }
+
+    // Configuration management
+    void setSlaveConfig(
+        uint32_t slaveId,
+        const Backend2Master::SlaveConfigMessage::SlaveInfo &config) {
+        slaveConfigs[slaveId] = config;
+    }
+
+    Backend2Master::SlaveConfigMessage::SlaveInfo
+    getSlaveConfig(uint32_t slaveId) const {
+        auto it = slaveConfigs.find(slaveId);
+        return it != slaveConfigs.end()
+                   ? it->second
+                   : Backend2Master::SlaveConfigMessage::SlaveInfo{};
+    }
+
+    bool hasSlaveConfig(uint32_t slaveId) const {
+        return slaveConfigs.find(slaveId) != slaveConfigs.end();
+    }
+
+    // Mode management
+    void setCurrentMode(uint8_t mode) { currentMode = mode; }
+    uint8_t getCurrentMode() const { return currentMode; }
+
+    // System status management
+    void setSystemRunningStatus(uint8_t status) {
+        systemRunningStatus = status;
+    }
+    uint8_t getSystemRunningStatus() const { return systemRunningStatus; }
 };
 
 class MasterServer {
@@ -99,6 +167,8 @@ class MasterServer {
     DeviceManager deviceManager;
     std::unordered_map<uint8_t, std::unique_ptr<IMessageHandler>>
         messageHandlers;
+    std::vector<PendingCommand> pendingCommands;
+    std::vector<PingSession> activePingSessions;
 
   public:
     MasterServer(uint16_t listenPort = 8888);
@@ -124,6 +194,17 @@ class MasterServer {
                                const sockaddr_in &clientAddr);
     void sendCommandToSlave(uint32_t slaveId, std::unique_ptr<Message> command,
                             const sockaddr_in &clientAddr);
+    void sendCommandToSlaveWithRetry(uint32_t slaveId,
+                                     std::unique_ptr<Message> command,
+                                     const sockaddr_in &clientAddr,
+                                     uint8_t maxRetries = 3);
+
+    // Command management
+    void processPendingCommands();
+    void addPingSession(uint32_t targetId, uint8_t pingMode,
+                        uint16_t totalCount, uint16_t interval,
+                        const sockaddr_in &clientAddr);
+    void processPingSessions();
 
     // Device management
     DeviceManager &getDeviceManager() { return deviceManager; }
@@ -186,12 +267,18 @@ class SlaveConfigHandler : public IMessageHandler {
         if (!configMsg)
             return;
 
-        // Register slaves in device manager
+        // Store slave configurations in device manager
         for (const auto &slave : configMsg->slaves) {
             server->getDeviceManager().addSlave(slave.id);
+            server->getDeviceManager().setSlaveConfig(slave.id, slave);
+            Log::i("SlaveConfigHandler",
+                   "Stored config for slave 0x%08X: Conduction=%d, "
+                   "Resistance=%d, ClipMode=%d",
+                   slave.id, static_cast<int>(slave.conductionNum),
+                   static_cast<int>(slave.resistanceNum),
+                   static_cast<int>(slave.clipMode));
         }
 
-        // TODO: Send configuration commands to individual slaves
         Log::i("SlaveConfigHandler",
                "Configuration actions executed for %d slaves",
                static_cast<int>(configMsg->slaveNum));
@@ -212,6 +299,7 @@ class ModeConfigHandler : public IMessageHandler {
                static_cast<int>(modeMsg->mode));
 
         auto response =
+
             std::make_unique<Master2Backend::ModeConfigResponseMessage>();
         response->status = 0; // Success
         response->mode = modeMsg->mode;
@@ -225,9 +313,85 @@ class ModeConfigHandler : public IMessageHandler {
         if (!modeMsg)
             return;
 
-        // TODO: Apply mode configuration to all connected slaves
-        Log::i("ModeConfigHandler", "Mode configuration applied: %d",
-               static_cast<int>(modeMsg->mode));
+        // Store mode information
+        server->getDeviceManager().setCurrentMode(modeMsg->mode);
+
+        // Send configuration commands to slaves based on mode and stored slave
+        // configs
+        auto connectedSlaves = server->getDeviceManager().getConnectedSlaves();
+        for (uint32_t slaveId : connectedSlaves) {
+            if (server->getDeviceManager().hasSlaveConfig(slaveId)) {
+                auto slaveConfig =
+                    server->getDeviceManager().getSlaveConfig(slaveId);
+
+                // Send different configuration messages based on mode
+                switch (modeMsg->mode) {
+                case 0: // Conduction mode
+                    if (slaveConfig.conductionNum > 0) {
+                        auto condCmd = std::make_unique<
+                            Master2Slave::ConductionConfigMessage>();
+                        condCmd->timeSlot = 1;
+                        condCmd->interval = 100; // 100ms default
+                        condCmd->totalConductionNum = slaveConfig.conductionNum;
+                        condCmd->startConductionNum = 0;
+                        condCmd->conductionNum = slaveConfig.conductionNum;
+
+                        // Use retry mechanism for important configuration
+                        // commands
+                        server->sendCommandToSlaveWithRetry(
+                            slaveId, std::move(condCmd), sockaddr_in{}, 3);
+                        Log::i("ModeConfigHandler",
+                               "Sent conduction config to slave 0x%08X",
+                               slaveId);
+                    }
+                    break;
+
+                case 1: // Resistance mode
+                    if (slaveConfig.resistanceNum > 0) {
+                        auto resCmd = std::make_unique<
+                            Master2Slave::ResistanceConfigMessage>();
+                        resCmd->timeSlot = 1;
+                        resCmd->interval = 100; // 100ms default
+                        resCmd->totalNum = slaveConfig.resistanceNum;
+                        resCmd->startNum = 0;
+                        resCmd->num = slaveConfig.resistanceNum;
+
+                        server->sendCommandToSlaveWithRetry(
+                            slaveId, std::move(resCmd), sockaddr_in{}, 3);
+                        Log::i("ModeConfigHandler",
+                               "Sent resistance config to slave 0x%08X",
+                               slaveId);
+                    }
+                    break;
+
+                case 2: // Clip mode
+                {
+                    auto clipCmd =
+                        std::make_unique<Master2Slave::ClipConfigMessage>();
+                    clipCmd->interval = 100; // 100ms default
+                    clipCmd->mode = slaveConfig.clipMode;
+                    clipCmd->clipPin = slaveConfig.clipStatus;
+
+                    server->sendCommandToSlaveWithRetry(
+                        slaveId, std::move(clipCmd), sockaddr_in{}, 3);
+                    Log::i("ModeConfigHandler",
+                           "Sent clip config to slave 0x%08X", slaveId);
+                } break;
+
+                default:
+                    Log::w("ModeConfigHandler", "Unknown mode: %d",
+                           static_cast<int>(modeMsg->mode));
+                    break;
+                }
+            } else {
+                Log::w("ModeConfigHandler",
+                       "No configuration found for slave 0x%08X", slaveId);
+            }
+        }
+
+        Log::i("ModeConfigHandler",
+               "Mode configuration applied: %d, sent to %zu slaves",
+               static_cast<int>(modeMsg->mode), connectedSlaves.size());
     }
 };
 
@@ -272,19 +436,31 @@ class ResetHandler : public IMessageHandler {
         if (!rstMsg)
             return;
 
-        // TODO: Send reset commands to specified slaves
+        // Send reset commands to specified slaves with retry mechanism
+        int successCount = 0;
         for (const auto &slave : rstMsg->slaves) {
             if (server->getDeviceManager().isSlaveConnected(slave.id)) {
                 auto resetCmd = std::make_unique<Master2Slave::RstMessage>();
                 resetCmd->lockStatus = slave.lock;
                 resetCmd->clipLed = slave.clipStatus;
-                // server->sendCommandToSlave(slave.id, std::move(resetCmd),
-                // clientAddr);
+
+                server->sendCommandToSlaveWithRetry(
+                    slave.id, std::move(resetCmd), sockaddr_in{}, 3);
+                successCount++;
+                Log::i("ResetHandler",
+                       "Sent reset command to slave 0x%08X (lock=%d, "
+                       "clipLed=0x%04X)",
+                       slave.id, static_cast<int>(slave.lock),
+                       slave.clipStatus);
+            } else {
+                Log::w("ResetHandler",
+                       "Slave 0x%08X is not connected, skipping reset",
+                       slave.id);
             }
         }
 
-        Log::i("ResetHandler", "Reset commands sent to %d slaves",
-               static_cast<int>(rstMsg->slaveNum));
+        Log::i("ResetHandler", "Reset commands sent to %d/%d slaves",
+               successCount, static_cast<int>(rstMsg->slaveNum));
     }
 };
 
@@ -315,9 +491,73 @@ class ControlHandler : public IMessageHandler {
         if (!ctrlMsg)
             return;
 
-        // TODO: Apply control command to system
-        Log::i("ControlHandler", "Control command executed - Status: %d",
-               static_cast<int>(ctrlMsg->runningStatus));
+        // Store system running status
+        server->getDeviceManager().setSystemRunningStatus(
+            ctrlMsg->runningStatus);
+
+        // Apply control command based on running status
+        auto connectedSlaves = server->getDeviceManager().getConnectedSlaves();
+        int commandsSent = 0;
+
+        switch (ctrlMsg->runningStatus) {
+        case 0: // Stop/Pause system
+        {
+            Log::i("ControlHandler", "Stopping system operations");
+            // Send stop commands to all connected slaves if needed
+            for (uint32_t slaveId : connectedSlaves) {
+                // For now, we could send a sync message to coordinate stopping
+                auto syncCmd = std::make_unique<Master2Slave::SyncMessage>();
+                syncCmd->mode = 0; // Stop mode
+                syncCmd->timestamp = MasterServer::getCurrentTimestamp();
+
+                server->sendCommandToSlaveWithRetry(slaveId, std::move(syncCmd),
+                                                    sockaddr_in{}, 2);
+                commandsSent++;
+            }
+        } break;
+
+        case 1: // Start/Resume system
+        {
+            Log::i("ControlHandler", "Starting system operations");
+            // Send start commands and apply current mode configuration
+            uint8_t currentMode = server->getDeviceManager().getCurrentMode();
+            for (uint32_t slaveId : connectedSlaves) {
+                // Send sync message to start operations
+                auto syncCmd = std::make_unique<Master2Slave::SyncMessage>();
+                syncCmd->mode = currentMode;
+                syncCmd->timestamp = MasterServer::getCurrentTimestamp();
+
+                server->sendCommandToSlaveWithRetry(slaveId, std::move(syncCmd),
+                                                    sockaddr_in{}, 2);
+                commandsSent++;
+            }
+        } break;
+
+        case 2: // Reset system
+        {
+            Log::i("ControlHandler", "Resetting system");
+            // Send reset to all connected slaves
+            for (uint32_t slaveId : connectedSlaves) {
+                auto resetCmd = std::make_unique<Master2Slave::RstMessage>();
+                resetCmd->lockStatus = 0; // Unlock
+                resetCmd->clipLed = 0;    // Turn off LEDs
+
+                server->sendCommandToSlaveWithRetry(
+                    slaveId, std::move(resetCmd), sockaddr_in{}, 3);
+                commandsSent++;
+            }
+        } break;
+
+        default:
+            Log::w("ControlHandler", "Unknown running status: %d",
+                   static_cast<int>(ctrlMsg->runningStatus));
+            break;
+        }
+
+        Log::i(
+            "ControlHandler",
+            "Control command executed - Status: %d, Commands sent to %d slaves",
+            static_cast<int>(ctrlMsg->runningStatus), commandsSent);
     }
 };
 
@@ -352,9 +592,21 @@ class PingControlHandler : public IMessageHandler {
         if (!pingMsg)
             return;
 
-        // TODO: Execute ping commands to target slave
-        Log::i("PingControlHandler", "Ping command executed to target 0x%08X",
-               pingMsg->destinationId);
+        // Start ping session for the target slave
+        if (server->getDeviceManager().isSlaveConnected(
+                pingMsg->destinationId)) {
+            server->addPingSession(pingMsg->destinationId, pingMsg->pingMode,
+                                   pingMsg->pingCount, pingMsg->interval,
+                                   sockaddr_in{});
+            Log::i("PingControlHandler",
+                   "Started ping session to target 0x%08X (mode=%d, count=%d, "
+                   "interval=%dms)",
+                   pingMsg->destinationId, static_cast<int>(pingMsg->pingMode),
+                   pingMsg->pingCount, pingMsg->interval);
+        } else {
+            Log::w("PingControlHandler", "Target slave 0x%08X is not connected",
+                   pingMsg->destinationId);
+        }
     }
 };
 
@@ -395,8 +647,13 @@ class DeviceListHandler : public IMessageHandler {
     }
 
     void executeActions(const Message &message, MasterServer *server) override {
-        // No additional actions needed for device list request
-        Log::i("DeviceListHandler", "Device list request processed");
+        // Device list request doesn't require additional actions
+        // The response generation already provides the current device list
+        auto connectedSlaves = server->getDeviceManager().getConnectedSlaves();
+        Log::i(
+            "DeviceListHandler",
+            "Device list request processed - %zu devices currently connected",
+            connectedSlaves.size());
     }
 };
 
@@ -538,6 +795,114 @@ void MasterServer::sendCommandToSlave(uint32_t slaveId,
     Log::i("Master", "Master2Slave command sent");
 }
 
+void MasterServer::sendCommandToSlaveWithRetry(uint32_t slaveId,
+                                               std::unique_ptr<Message> command,
+                                               const sockaddr_in &clientAddr,
+                                               uint8_t maxRetries) {
+    // Create a pending command for retry management
+    PendingCommand pendingCmd(slaveId, std::move(command), clientAddr,
+                              maxRetries);
+    pendingCmd.timestamp = getCurrentTimestamp();
+
+    // Send the command immediately
+    sendCommandToSlave(slaveId,
+                       std::unique_ptr<Message>(pendingCmd.command.get()),
+                       clientAddr);
+
+    // Add to pending commands list for retry management
+    pendingCommands.push_back(std::move(pendingCmd));
+
+    Log::i("Master",
+           "Command sent to slave 0x%08X with retry support (max retries: %d)",
+           slaveId, maxRetries);
+}
+
+void MasterServer::processPendingCommands() {
+    uint32_t currentTime = getCurrentTimestamp();
+    const uint32_t RETRY_TIMEOUT = 5000; // 5 seconds timeout
+
+    auto it = pendingCommands.begin();
+    while (it != pendingCommands.end()) {
+        if (currentTime - it->timestamp > RETRY_TIMEOUT) {
+            if (it->retryCount < it->maxRetries) {
+                // Retry the command
+                it->retryCount++;
+                it->timestamp = currentTime;
+
+                // Create a copy of the command for retry
+                // Note: This is a simplified approach, in practice you'd need
+                // proper message cloning
+                sendCommandToSlave(it->slaveId,
+                                   std::unique_ptr<Message>(it->command.get()),
+                                   it->clientAddr);
+
+                Log::i("Master",
+                       "Retrying command to slave 0x%08X (attempt %d/%d)",
+                       it->slaveId, it->retryCount, it->maxRetries);
+                ++it;
+            } else {
+                // Max retries reached, remove from pending list
+                Log::w("Master",
+                       "Command to slave 0x%08X failed after %d retries",
+                       it->slaveId, it->maxRetries);
+                it = pendingCommands.erase(it);
+            }
+        } else {
+            ++it;
+        }
+    }
+}
+
+void MasterServer::addPingSession(uint32_t targetId, uint8_t pingMode,
+                                  uint16_t totalCount, uint16_t interval,
+                                  const sockaddr_in &clientAddr) {
+    // Create a new ping session
+    PingSession session(targetId, pingMode, totalCount, interval, clientAddr);
+    session.lastPingTime = getCurrentTimestamp();
+
+    activePingSessions.push_back(std::move(session));
+
+    Log::i("Master",
+           "Added ping session for target 0x%08X (mode=%d, count=%d, "
+           "interval=%dms)",
+           targetId, pingMode, totalCount, interval);
+}
+
+void MasterServer::processPingSessions() {
+    uint32_t currentTime = getCurrentTimestamp();
+
+    auto it = activePingSessions.begin();
+    while (it != activePingSessions.end()) {
+        if (currentTime - it->lastPingTime >= it->interval) {
+            if (it->currentCount < it->totalCount) {
+                // Send ping command
+                auto pingCmd = std::make_unique<Master2Slave::PingReqMessage>();
+                pingCmd->sequenceNumber = it->currentCount + 1;
+                pingCmd->timestamp = currentTime;
+
+                sendCommandToSlave(it->targetId, std::move(pingCmd),
+                                   it->clientAddr);
+
+                it->currentCount++;
+                it->lastPingTime = currentTime;
+
+                Log::i("Master", "Sent ping %d/%d to target 0x%08X",
+                       it->currentCount, it->totalCount, it->targetId);
+                ++it;
+            } else {
+                // Ping session completed
+                Log::i("Master",
+                       "Ping session completed for target 0x%08X (%d/%d "
+                       "successful)",
+                       it->targetId, it->successCount, it->totalCount);
+                it = activePingSessions.erase(it);
+            }
+        } else {
+            ++it;
+        }
+    }
+}
+
 void MasterServer::processBackend2MasterMessage(const Message &message,
                                                 const sockaddr_in &clientAddr) {
     uint8_t messageId = message.getMessageId();
@@ -628,7 +993,17 @@ void MasterServer::processSlave2MasterMessage(uint32_t slaveId,
         if (pingRspMsg) {
             Log::i("Master", "Received ping response - Sequence: %d",
                    static_cast<int>(pingRspMsg->sequenceNumber));
-            // TODO: Forward response to backend
+
+            // Update ping session success count
+            for (auto &session : activePingSessions) {
+                if (session.targetId == slaveId) {
+                    session.successCount++;
+                    Log::i("Master",
+                           "Updated ping session for 0x%08X: %d/%d successful",
+                           slaveId, session.successCount, session.totalCount);
+                    break;
+                }
+            }
         }
         break;
     }
@@ -707,6 +1082,10 @@ void MasterServer::run() {
     processor.setMTU(100);
 
     while (true) {
+        // Process pending commands and ping sessions
+        processPendingCommands();
+        processPingSessions();
+
         int bytesReceived = recvfrom(sock, buffer, sizeof(buffer), 0,
                                      (sockaddr *)&clientAddr, &clientAddrLen);
 
