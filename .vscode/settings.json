@@ -17,7 +17,7 @@
     "clangd.arguments": [
         "--header-insertion=never",
         "--completion-style=detailed",
-        "--compile-commands-dir=${workspaceFolder}/build",
+        "--compile-commands-dir=${workspaceFolder}/build/release",
         "--background-index",
         "--clang-tidy"
     ],

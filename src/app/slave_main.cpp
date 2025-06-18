@@ -31,13 +31,14 @@ class SlaveDevice {
   private:
     SOCKET sock;
     sockaddr_in serverAddr;
+    sockaddr_in masterAddr; // Master address (port 8080)
     ProtocolProcessor processor;
     uint16_t port;
     uint32_t deviceId;
     std::unique_ptr<Adapter::ContinuityCollector> continuityCollector;
 
   public:
-    SlaveDevice(uint16_t listenPort = 8889, uint32_t id = 0x3732485B)
+    SlaveDevice(uint16_t listenPort = 8081, uint32_t id = 0x3732485B)
         : port(listenPort), deviceId(id) {
 #ifdef _WIN32
         WSADATA wsaData;
@@ -51,9 +52,15 @@ class SlaveDevice {
             throw std::runtime_error("Socket creation failed");
         }
 
+        // Configure server address (Slave listens on port 8081)
         serverAddr.sin_family = AF_INET;
         serverAddr.sin_addr.s_addr = INADDR_ANY;
         serverAddr.sin_port = htons(port);
+
+        // Configure master address (Master uses port 8080)
+        masterAddr.sin_family = AF_INET;
+        masterAddr.sin_addr.s_addr = inet_addr("127.0.0.1"); // localhost
+        masterAddr.sin_port = htons(8080);
 
         if (bind(sock, (sockaddr *)&serverAddr, sizeof(serverAddr)) ==
             SOCKET_ERROR) {
@@ -67,6 +74,7 @@ class SlaveDevice {
 
         Log::i("Slave", "Slave device (ID: 0x%08X) listening on port %d",
                deviceId, port);
+        Log::i("Slave", "Master communication port: 8080");
     }
 
     ~SlaveDevice() {
@@ -348,11 +356,13 @@ class SlaveDevice {
                         for (const auto &fragment : responseData) {
                             // printBytes(fragment, "Response data");
                             // Send response
+                            // Send response to master on port 8080
                             sendto(
                                 sock,
                                 reinterpret_cast<const char *>(fragment.data()),
                                 static_cast<int>(fragment.size()), 0,
-                                (sockaddr *)&masterAddr, sizeof(masterAddr));
+                                (sockaddr *)&this->masterAddr,
+                                sizeof(this->masterAddr));
                         }
                     }
                 } else {
@@ -376,17 +386,19 @@ class SlaveDevice {
         Log::i("Slave", "Device ID: 0x%08X, listening on port %d", deviceId,
                port);
         Log::i("Slave", "Handling Master2Slave packets only");
+        Log::i("Slave", "Sending responses to Master on port 8080");
 
         char buffer[1024];
-        sockaddr_in masterAddr;
-        socklen_t masterAddrLen = sizeof(masterAddr);
+        sockaddr_in
+            senderAddr; // Renamed to avoid confusion with member masterAddr
+        socklen_t senderAddrLen = sizeof(senderAddr);
 
         processor.setMTU(100);
 
         while (true) {
             int bytesReceived =
                 recvfrom(sock, buffer, sizeof(buffer), 0,
-                         (sockaddr *)&masterAddr, &masterAddrLen);
+                         (sockaddr *)&senderAddr, &senderAddrLen);
 
             if (bytesReceived > 0) {
                 std::vector<uint8_t> data(buffer, buffer + bytesReceived);
@@ -394,7 +406,7 @@ class SlaveDevice {
                 processor.processReceivedData(data);
                 Frame receivedFrame;
                 while (processor.getNextCompleteFrame(receivedFrame)) {
-                    processFrame(receivedFrame, masterAddr);
+                    processFrame(receivedFrame, senderAddr);
                 }
             }
         }
@@ -404,9 +416,13 @@ class SlaveDevice {
 int main() {
     Log::i("Main", "WhtsProtocol Slave Device");
     Log::i("Main", "=========================");
+    Log::i("Main", "Port Configuration:");
+    Log::i("Main", "  Backend: 8079");
+    Log::i("Main", "  Master:  8080 (sends commands to Slave)");
+    Log::i("Main", "  Slave:   8081 (listens for Master commands)");
 
     try {
-        SlaveDevice device(8889, 0x3732485B);
+        SlaveDevice device(8081, 0x3732485B);
         device.run();
     } catch (const std::exception &e) {
         Log::e("Main", "Error: %s", e.what());

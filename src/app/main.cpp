@@ -35,7 +35,7 @@ class UdpProtocolTester {
     uint16_t port;
 
   public:
-    UdpProtocolTester(uint16_t listenPort = 8888) : port(listenPort) {
+    UdpProtocolTester(uint16_t listenPort = 8079) : port(listenPort) {
 #ifdef _WIN32
         WSADATA wsaData;
         if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0) {
@@ -58,7 +58,10 @@ class UdpProtocolTester {
             throw std::runtime_error("Bind failed");
         }
 
-        Log::i("UdpTester", "UDP Protocol Tester listening on port %d", port);
+        Log::i("UdpTester",
+               "UDP Protocol Tester (Backend) listening on port %d", port);
+        Log::i("UdpTester",
+               "Port configuration: Backend=8079, Master=8080, Slave=8081");
     }
 
     ~UdpProtocolTester() {
@@ -1025,11 +1028,14 @@ class UdpProtocolTester {
 };
 
 int main() {
-    Log::i("Main", "WhtsProtocol UDP tester");
-    Log::i("Main", "======================");
+    Log::i("Main", "WhtsProtocol Backend Tester");
+    Log::i("Main", "===========================");
+    Log::i("Main", "Backend Port: 8079");
+    Log::i("Main", "Master Port: 8080");
+    Log::i("Main", "Slave Port: 8081");
 
     try {
-        UdpProtocolTester tester(8888);
+        UdpProtocolTester tester(8079);
         tester.run();
     } catch (const std::exception &e) {
         Log::e("Main", "Error: %s", e.what());
