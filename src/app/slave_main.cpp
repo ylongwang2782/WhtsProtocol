@@ -310,7 +310,7 @@ class SlaveDevice {
     }
 
     // Process received frame
-    void processFrame(Frame &frame, const sockaddr_in & /* masterAddr */) {
+    void processFrame(Frame &frame, const sockaddr_in &masterAddr) {
         Log::i("Slave",
                "Processing frame - PacketId: 0x%02X, payload size: %zu",
                static_cast<int>(frame.packetId), frame.payload.size());
@@ -335,6 +335,39 @@ class SlaveDevice {
 
                     if (response) {
                         Log::i("Slave", "Generated response message");
+
+                        std::vector<std::vector<uint8_t>> responseData;
+                        DeviceStatus deviceStatus = {};
+                        if (response->getMessageId() ==
+                                static_cast<uint8_t>(Slave2BackendMessageId::
+                                                         CONDUCTION_DATA_MSG) ||
+                            response->getMessageId() ==
+                                static_cast<uint8_t>(Slave2BackendMessageId::
+                                                         RESISTANCE_DATA_MSG) ||
+                            response->getMessageId() ==
+                                static_cast<uint8_t>(
+                                    Slave2BackendMessageId::CLIP_DATA_MSG)) {
+                            Log::i("ResponseSender",
+                                   "Packing Slave2Backend message");
+                            responseData = processor.packSlave2BackendMessage(
+                                deviceId, deviceStatus, *response);
+                        } else {
+                            responseData = processor.packSlave2MasterMessage(
+                                deviceId, *response);
+                        }
+
+                        Log::i("ResponseSender", "Sending response:");
+
+                        // Send all fragments
+                        for (const auto &fragment : responseData) {
+                            // printBytes(fragment, "Response data");
+                            // Send response
+                            sendto(
+                                sock,
+                                reinterpret_cast<const char *>(fragment.data()),
+                                static_cast<int>(fragment.size()), 0,
+                                (sockaddr *)&masterAddr, sizeof(masterAddr));
+                        }
                     }
                 } else {
                     Log::d("Slave",

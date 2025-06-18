@@ -1,12 +1,16 @@
 CompileFlags:
-  Add: 
+  Add:
+    - -I./src/HAL/Gpio
+    - -I./src/Adapter
+    - -I./src/logger
+    - -I./src/protocol
+    - -I./src/protocol/messages
+    - -I./src/protocol/utils
     - -std=c++17
-    - -Wall
-    - -Wextra
   Remove: 
     - -W*
     - -w
-  CompilationDatabase: build
+  CompilationDatabase: ./build
 
 Diagnostics:
   ClangTidy:
@@ -18,6 +22,7 @@ Diagnostics:
       - readability-magic-numbers
       - modernize-use-trailing-return-type
   UnusedIncludes: Strict
+  MissingIncludes: Strict
 
 Index:
   Background: Build 

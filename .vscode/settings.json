@@ -7,7 +7,8 @@
     "cmake.cmakePath": "cmake",
     "cmake.configureSettings": {
         "CMAKE_C_COMPILER": "clang",
-        "CMAKE_CXX_COMPILER": "clang++"
+        "CMAKE_CXX_COMPILER": "clang++",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
     },
     "C_Cpp.default.compilerPath": "clang++",
     "cmake.buildDirectory": "${workspaceFolder}/build",
@@ -16,7 +17,9 @@
     "clangd.arguments": [
         "--header-insertion=never",
         "--completion-style=detailed",
-        "--compile-commands-dir=./build"
+        "--compile-commands-dir=${workspaceFolder}/build",
+        "--background-index",
+        "--clang-tidy"
     ],
     "files.associations": {
         "iostream": "cpp"

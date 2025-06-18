@@ -1,13 +1,6 @@
 # Application executables
 cmake_minimum_required(VERSION 3.10)
 
-# Include directories for headers
-include_directories(${CMAKE_CURRENT_SOURCE_DIR}/../HAL/Gpio)
-include_directories(${CMAKE_CURRENT_SOURCE_DIR}/../Adapter)
-include_directories(${CMAKE_CURRENT_SOURCE_DIR}/../logger)
-include_directories(${CMAKE_CURRENT_SOURCE_DIR}/../protocol)
-include_directories(${CMAKE_CURRENT_SOURCE_DIR}/../protocol/messages)
-
 # Create executables
 add_executable(main main.cpp)
 add_executable(Master master_main.cpp)
@@ -18,6 +11,17 @@ set(ALL_EXECUTABLES main Master Slave)
 
 # Apply common settings to all executables
 foreach(target ${ALL_EXECUTABLES})
+    # Set include directories for each target
+    target_include_directories(${target} 
+        PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../HAL/Gpio
+        ${CMAKE_CURRENT_SOURCE_DIR}/../Adapter
+        ${CMAKE_CURRENT_SOURCE_DIR}/../logger
+        ${CMAKE_CURRENT_SOURCE_DIR}/../protocol
+        ${CMAKE_CURRENT_SOURCE_DIR}/../protocol/messages
+        ${CMAKE_CURRENT_SOURCE_DIR}/../protocol/utils
+    )
+    
     # Link libraries
     target_link_libraries(${target} 
         WhtsProtocol
