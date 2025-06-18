@@ -47,12 +47,12 @@ cmake --build build --target Slave
 
 ### 启动Master服务器
 ```bash
-./build/src/Master.exe
+./build/src/app/Master.exe
 ```
 
 ### 启动Slave设备
 ```bash
-./build/src/Slave.exe
+./build/src/app/Slave.exe
 ```
 
 ## 支持的消息类型
