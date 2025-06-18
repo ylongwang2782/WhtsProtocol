@@ -1,5 +1,5 @@
 #include "ContinuityCollector.h"
-#include "../HAL/GpioFactory.h"
+#include "GpioFactory.h"
 #include <algorithm>
 #include <iomanip>
 #include <map>

@@ -1,2 +1,7 @@
 build/
 .cache/
+
+# clangd缓存
+.clangd/
+
+compile_commands.json

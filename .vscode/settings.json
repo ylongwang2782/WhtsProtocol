@@ -15,7 +15,8 @@
     "clangd.path": "clangd",
     "clangd.arguments": [
         "--header-insertion=never",
-        "--completion-style=detailed"
+        "--completion-style=detailed",
+        "--compile-commands-dir=./build"
     ],
     "files.associations": {
         "iostream": "cpp"

@@ -1,13 +1,15 @@
 #ifndef CONTINUITY_COLLECTOR_H
 #define CONTINUITY_COLLECTOR_H
 
-#include "../HAL/IGpio.h"
-#include "../HAL/VirtualGpio.h"
+#include "IGpio.h"
+#include "VirtualGpio.h"
 #include <atomic>
 #include <chrono>
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <string>
 #include <thread>
 #include <vector>
 

@@ -15,7 +15,7 @@ target_include_directories(Adapter PUBLIC
 find_package(Threads REQUIRED)
 target_link_libraries(Adapter 
     PUBLIC 
-        HAL
+        Gpio  # 直接链接Gpio库而不是HAL接口库
     PRIVATE
         Threads::Threads
 )

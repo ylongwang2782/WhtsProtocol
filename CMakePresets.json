@@ -21,6 +21,7 @@
             "inherits": "base-clang",
             "binaryDir": "${sourceDir}/build/debug",
             "cacheVariables": {
+                "CMAKE_EXPORT_COMPILE_COMMANDS": "true",
                 "CMAKE_BUILD_TYPE": "Debug"
             }
         },
@@ -30,6 +31,7 @@
             "inherits": "base-clang",
             "binaryDir": "${sourceDir}/build/release",
             "cacheVariables": {
+                "CMAKE_EXPORT_COMPILE_COMMANDS": "true",
                 "CMAKE_BUILD_TYPE": "Release"
             }
         }
