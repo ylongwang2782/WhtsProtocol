@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <chrono>
 #include <iomanip>
+#include <iostream>
 #include <memory>
 #include <sstream>
 #include <string>
@@ -462,11 +463,35 @@ int main() {
     try {
         MultiSlaveManager manager;
 
-        // Add multiple slave devices with different IDs
-        manager.addSlave(0x3732485B); // Original slave ID
-        manager.addSlave(0x3732485C); // Slave 2
-        manager.addSlave(0x3732485D); // Slave 3
-        manager.addSlave(0x3732485E); // Slave 4
+        // Get number of slaves from user input
+        int numSlaves = 0;
+        std::cout << "\nPlease enter the number of slave devices to simulate "
+                     "(1-99): ";
+        std::cin >> numSlaves;
+
+        // Validate input
+        if (numSlaves < 1 || numSlaves > 99) {
+            Log::e("Main",
+                   "Invalid number of slaves. Must be between 1 and 99.");
+            return 1;
+        }
+
+        Log::i("Main", "Creating %d slave devices...", numSlaves);
+
+        // Create slaves with sequential device IDs starting from 0x00000001
+        std::vector<uint32_t> deviceIds;
+        for (int i = 0; i < numSlaves; i++) {
+            uint32_t deviceId = 0x00000001 + i;
+            manager.addSlave(deviceId);
+            deviceIds.push_back(deviceId);
+        }
+
+        // Output all device IDs in a list format
+        Log::i("Main", "Successfully created %d slave devices:", numSlaves);
+        Log::i("Main", "Device ID List:");
+        for (size_t i = 0; i < deviceIds.size(); i++) {
+            Log::i("Main", "  [%zu] Device ID: 0x%08X", i + 1, deviceIds[i]);
+        }
 
         Log::i("Main", "Starting multi-slave simulation...");
         manager.start();
