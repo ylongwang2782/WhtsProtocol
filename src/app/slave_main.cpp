@@ -18,6 +18,7 @@
 typedef int socklen_t;
 #else
 #include <arpa/inet.h>
+#include <fcntl.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
 #include <unistd.h>
@@ -49,6 +50,12 @@ enum class SlaveDeviceState {
  * 3. 接收 ReadConductionDataMessage 获取最新采集的数据
  * 4. 可以重复步骤2和3多次，无需重新配置
  * 5. 如需重置设备状态但保留配置，可发送 RstMessage
+ *
+ * 优化说明：
+ * - 使用状态机替代线程模型，提高稳定性
+ * - 在主循环中定期处理采集状态
+ * - 接收 Sync Message 后立即执行一次数据采集，确保快速响应
+ * - 非阻塞套接字实现，确保数据采集过程中仍能接收网络消息
  */
 class SlaveDevice {
   private:
@@ -164,6 +171,9 @@ class SlaveDevice {
                         deviceState = SlaveDeviceState::COLLECTING;
                         Log::i("MessageProcessor",
                                "Data collection started successfully");
+
+                        // 立即处理一次采集状态，确保快速响应
+                        continuityCollector->processCollection();
                     } else {
                         Log::e("MessageProcessor",
                                "Failed to start data collection");
@@ -300,10 +310,9 @@ class SlaveDevice {
                 if (isConfigured && continuityCollector) {
                     // 检查采集状态
                     if (deviceState == SlaveDeviceState::COLLECTING) {
-                        // 等待完成并获取数据
+                        // 处理采集状态，快速完成数据收集
                         while (!continuityCollector->isCollectionComplete()) {
-                            std::this_thread::sleep_for(
-                                std::chrono::milliseconds(100));
+                            continuityCollector->processCollection();
                         }
                         deviceState = SlaveDeviceState::COLLECTION_COMPLETE;
                     }
@@ -526,7 +535,28 @@ class SlaveDevice {
 
         processor.setMTU(100);
 
+        // 设置非阻塞模式，以便我们可以定期处理采集状态
+#ifdef _WIN32
+        u_long mode = 1; // 1为非阻塞
+        ioctlsocket(sock, FIONBIO, &mode);
+#else
+        int flags = fcntl(sock, F_GETFL, 0);
+        fcntl(sock, F_SETFL, flags | O_NONBLOCK);
+#endif
+
         while (true) {
+            // 处理采集状态（状态机）
+            if (isConfigured && deviceState == SlaveDeviceState::COLLECTING) {
+                continuityCollector->processCollection();
+
+                // 检查是否完成采集
+                if (continuityCollector->isCollectionComplete()) {
+                    Log::i("Slave", "Data collection completed automatically");
+                    deviceState = SlaveDeviceState::COLLECTION_COMPLETE;
+                }
+            }
+
+            // 接收数据（非阻塞）
             int bytesReceived =
                 recvfrom(sock, buffer, sizeof(buffer), 0,
                          (sockaddr *)&senderAddr, &senderAddrLen);
@@ -539,6 +569,9 @@ class SlaveDevice {
                 while (processor.getNextCompleteFrame(receivedFrame)) {
                     processFrame(receivedFrame, senderAddr);
                 }
+            } else {
+                // 如果没有数据，短暂休眠以避免CPU占用过高
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
             }
         }
     }

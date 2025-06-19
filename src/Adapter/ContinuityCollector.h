@@ -10,7 +10,6 @@
 #include <memory>
 #include <mutex>
 #include <string>
-#include <thread>
 #include <vector>
 
 namespace Adapter {
@@ -67,20 +66,18 @@ class ContinuityCollector {
     CollectorConfig config_;           // 采集配置
     ContinuityMatrix dataMatrix_;      // 数据矩阵
 
-    std::atomic<CollectionStatus> status_; // 采集状态
-    std::atomic<uint8_t> currentCycle_;    // 当前周期
-    std::atomic<bool> stopRequested_;      // 停止请求标志
-
-    std::thread collectionThread_;      // 采集线程
+    CollectionStatus status_;           // 采集状态
+    uint8_t currentCycle_;              // 当前周期
+    uint32_t lastProcessTime_;          // 上次处理时间（毫秒）
     mutable std::mutex dataMutex_;      // 数据保护互斥锁
     ProgressCallback progressCallback_; // 进度回调
 
     // 私有方法
-    void collectionWorker();                          // 采集工作线程
     void initializeGpioPins();                        // 初始化GPIO引脚
     void deinitializeGpioPins();                      // 反初始化GPIO引脚
     ContinuityState readPinContinuity(uint8_t pin);   // 读取单个引脚导通状态
     void configurePinsForCycle(uint8_t currentCycle); // 为当前周期配置引脚模式
+    uint32_t getCurrentTimeMs();                      // 获取当前时间（毫秒）
 
   public:
     ContinuityCollector(std::unique_ptr<HAL::IGpio> gpio);
@@ -98,6 +95,9 @@ class ContinuityCollector {
 
     // 停止采集
     void stopCollection();
+
+    // 处理采集状态（状态机）
+    void processCollection();
 
     // 获取采集状态
     CollectionStatus getStatus() const;

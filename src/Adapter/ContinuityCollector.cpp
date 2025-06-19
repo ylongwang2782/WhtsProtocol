@@ -9,7 +9,7 @@ namespace Adapter {
 
 ContinuityCollector::ContinuityCollector(std::unique_ptr<HAL::IGpio> gpio)
     : gpio_(std::move(gpio)), status_(CollectionStatus::IDLE), currentCycle_(0),
-      stopRequested_(false) {
+      lastProcessTime_(0) {
 
     if (!gpio_) {
         status_ = CollectionStatus::ERROR;
@@ -18,9 +18,6 @@ ContinuityCollector::ContinuityCollector(std::unique_ptr<HAL::IGpio> gpio)
 
 ContinuityCollector::~ContinuityCollector() {
     stopCollection();
-    if (collectionThread_.joinable()) {
-        collectionThread_.join();
-    }
     deinitializeGpioPins();
 }
 
@@ -68,47 +65,89 @@ bool ContinuityCollector::startCollection() {
         return false;
     }
 
-    // 停止之前的线程
+    // 停止之前的采集
     stopCollection();
 
     // 初始化GPIO引脚
     initializeGpioPins();
 
     // 重置状态
-    stopRequested_ = false;
     currentCycle_ = 0;
     status_ = CollectionStatus::RUNNING;
+    lastProcessTime_ = getCurrentTimeMs();
 
-    // 启动采集线程
-    try {
-        collectionThread_ =
-            std::thread(&ContinuityCollector::collectionWorker, this);
-        return true;
-    } catch (const std::exception &) {
-        status_ = CollectionStatus::ERROR;
-        return false;
-    }
+    return true;
 }
 
 void ContinuityCollector::stopCollection() {
     if (status_ == CollectionStatus::RUNNING) {
-        stopRequested_ = true;
-
-        if (collectionThread_.joinable()) {
-            collectionThread_.join();
-        }
-
         status_ = CollectionStatus::IDLE;
     }
 }
 
-CollectionStatus ContinuityCollector::getStatus() const {
-    return status_.load();
+uint32_t ContinuityCollector::getCurrentTimeMs() {
+    return static_cast<uint32_t>(
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now().time_since_epoch())
+            .count());
 }
 
-uint8_t ContinuityCollector::getCurrentCycle() const {
-    return currentCycle_.load();
+// 状态机处理方法
+void ContinuityCollector::processCollection() {
+    // 只处理RUNNING状态
+    if (status_ != CollectionStatus::RUNNING) {
+        return;
+    }
+
+    // 检查是否已完成所有周期
+    if (currentCycle_ >= config_.totalDetectionNum) {
+        status_ = CollectionStatus::COMPLETED;
+        return;
+    }
+
+    // 检查是否到了下一个采集周期的时间
+    uint32_t currentTime = getCurrentTimeMs();
+    uint32_t elapsedTime = currentTime - lastProcessTime_;
+
+    if (elapsedTime >= config_.interval || currentCycle_ == 0) {
+        // 为当前周期配置GPIO引脚模式
+        configurePinsForCycle(currentCycle_);
+
+        // 读取当前周期的所有引脚状态
+        std::vector<ContinuityState> cycleData;
+        cycleData.reserve(config_.num);
+
+        for (uint8_t pin = 0; pin < config_.num; pin++) {
+            cycleData.push_back(readPinContinuity(pin));
+        }
+
+        // 保存数据到矩阵
+        {
+            std::lock_guard<std::mutex> lock(dataMutex_);
+            if (currentCycle_ < dataMatrix_.size()) {
+                dataMatrix_[currentCycle_] = std::move(cycleData);
+            }
+        }
+
+        // 调用进度回调
+        if (progressCallback_) {
+            progressCallback_(currentCycle_ + 1, config_.totalDetectionNum);
+        }
+
+        // 更新时间和周期
+        lastProcessTime_ = currentTime;
+        currentCycle_++;
+
+        // 检查是否完成
+        if (currentCycle_ >= config_.totalDetectionNum) {
+            status_ = CollectionStatus::COMPLETED;
+        }
+    }
 }
+
+CollectionStatus ContinuityCollector::getStatus() const { return status_; }
+
+uint8_t ContinuityCollector::getCurrentCycle() const { return currentCycle_; }
 
 uint8_t ContinuityCollector::getTotalCycles() const {
     return config_.totalDetectionNum;
@@ -297,53 +336,6 @@ void ContinuityCollector::simulateTestPattern(uint32_t pattern) {
         if (virtualGpio) {
             virtualGpio->simulateContinuityPattern(config_.num, pattern);
         }
-    }
-}
-
-// 私有方法实现
-void ContinuityCollector::collectionWorker() {
-    try {
-        for (uint8_t cycle = 0;
-             cycle < config_.totalDetectionNum && !stopRequested_; cycle++) {
-            currentCycle_ = cycle;
-
-            // 为当前周期配置GPIO引脚模式
-            configurePinsForCycle(cycle);
-
-            // 读取当前周期的所有引脚状态
-            std::vector<ContinuityState> cycleData;
-            cycleData.reserve(config_.num);
-
-            for (uint8_t pin = 0; pin < config_.num; pin++) {
-                cycleData.push_back(readPinContinuity(pin));
-            }
-
-            // 保存数据到矩阵
-            {
-                std::lock_guard<std::mutex> lock(dataMutex_);
-                if (cycle < dataMatrix_.size()) {
-                    dataMatrix_[cycle] = std::move(cycleData);
-                }
-            }
-
-            // 调用进度回调
-            if (progressCallback_) {
-                progressCallback_(cycle + 1, config_.totalDetectionNum);
-            }
-
-            // 等待指定间隔（除了最后一个周期）
-            if (cycle < config_.totalDetectionNum - 1 && !stopRequested_) {
-                std::this_thread::sleep_for(
-                    std::chrono::milliseconds(config_.interval));
-            }
-        }
-
-        if (!stopRequested_) {
-            status_ = CollectionStatus::COMPLETED;
-        }
-
-    } catch (const std::exception &) {
-        status_ = CollectionStatus::ERROR;
     }
 }
 

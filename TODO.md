@@ -39,6 +39,10 @@ response->conductionLength = response->conductionData.size();
 
 ## 🧹 技术债务
 
+- [x] Slave的工作流程优化
+1. Slave main 和ContinuityCollector中用到了Thread，我认为没有必要使用thead，当前是一个逻辑非常简单的程序，优化程序，建议使用状态机来优化程序，这样更稳定，避免使用thread
+2. 确保收到Sync Message后就立即执行数据采集以确保收到Read Conduction后能及时上传最新的数据
+
 ## 🐞 Bug 修复
 
 - [ ] 多从几文件有严重bug，发送两次Sync Message就必死机
