@@ -285,6 +285,16 @@ std::unique_ptr<Message> ProtocolProcessor::createMessage(PacketId packetId,
     return nullptr;
 }
 
+std::unique_ptr<Message>
+ProtocolProcessor::createMessageFromId(uint8_t messageId) {
+    // This function is problematic because MessageIDs are not unique across
+    // different PacketIds It should not be used. All parsing should use
+    // createMessage(PacketId, messageId) instead. Keeping this function for
+    // backward compatibility but it will return nullptr to force proper usage
+    // of createMessage with PacketId context.
+    return nullptr;
+}
+
 bool ProtocolProcessor::parseMaster2SlavePacket(
     const std::vector<uint8_t> &payload, uint32_t &destinationId,
     std::unique_ptr<Message> &message) {

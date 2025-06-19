@@ -96,6 +96,15 @@ class ProtocolProcessor {
     std::unique_ptr<Message> createMessage(PacketId packetId,
                                            uint8_t messageId);
 
+    // 根据Message ID创建对应的消息对象
+    // WARNING: This function is deprecated and should not be used!
+    // MessageIDs are not unique across different PacketIds, which causes
+    // ambiguity. Use createMessage(PacketId, messageId) instead to provide
+    // proper context.
+    [[deprecated("Use createMessage(PacketId, messageId) instead - MessageIDs "
+                 "are not unique across PacketIds")]]
+    std::unique_ptr<Message> createMessageFromId(uint8_t messageId);
+
     // 解析Master2Slave包
     bool parseMaster2SlavePacket(const std::vector<uint8_t> &payload,
                                  uint32_t &destinationId,

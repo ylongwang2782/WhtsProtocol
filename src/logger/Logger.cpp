@@ -82,7 +82,7 @@ void Logger::w(const std::string &tag, const std::string &message) {
 }
 
 void Logger::e(const std::string &tag, const std::string &message) {
-    log(LogLevel::ERROR, tag, message);
+    log(LogLevel::ERR, tag, message);
 }
 
 std::string Logger::getCurrentTimestamp() {
@@ -109,8 +109,8 @@ std::string Logger::levelToString(LogLevel level) {
         return "INFO";
     case LogLevel::WARN:
         return "WARN";
-    case LogLevel::ERROR:
-        return "ERROR";
+    case LogLevel::ERR:
+        return "ERR";
     default:
         return "UNKNOWN";
     }

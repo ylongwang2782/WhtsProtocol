@@ -1,14 +1,16 @@
 # Application executables
 cmake_minimum_required(VERSION 3.10)
 
+# Add master_main subdirectory
+add_subdirectory(master_main)
+
 # Create executables
 add_executable(main main.cpp)
-add_executable(Master master_main.cpp)
 add_executable(Slave slave_main.cpp)
 # add_executable(MultiSlave multi_slave_main.cpp)
 
 # Set of all executables for common configuration
-set(ALL_EXECUTABLES main Master Slave)
+set(ALL_EXECUTABLES main Slave)
 
 # Apply common settings to all executables
 foreach(target ${ALL_EXECUTABLES})
