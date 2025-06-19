@@ -39,6 +39,17 @@ enum class SlaveDeviceState {
     DEV_ERR              // 错误状态
 };
 
+/**
+ * SlaveDevice 类实现了从机设备的功能
+ *
+ * 工作流程：
+ * 1. 接收 ConductionConfigMessage 进行一次性配置，配置会被保存
+ * 2. 接收 SyncMessage
+ * 开始数据采集（可多次发送，每次都会使用保存的配置进行新的数据采集）
+ * 3. 接收 ReadConductionDataMessage 获取最新采集的数据
+ * 4. 可以重复步骤2和3多次，无需重新配置
+ * 5. 如需重置设备状态但保留配置，可发送 RstMessage
+ */
 class SlaveDevice {
   private:
     SOCKET sock;
@@ -49,11 +60,20 @@ class SlaveDevice {
     uint32_t deviceId;
     std::unique_ptr<Adapter::ContinuityCollector> continuityCollector;
 
-    // 新增状态管理
+    // 状态管理
     SlaveDeviceState deviceState;
     Adapter::CollectorConfig currentConfig;
     bool isConfigured;
     std::mutex stateMutex;
+
+    // 重置设备状态
+    void resetDevice() {
+        std::lock_guard<std::mutex> lock(stateMutex);
+        // 保留配置，但重置状态
+        deviceState = SlaveDeviceState::CONFIGURED;
+        Log::i("SlaveDevice",
+               "Device reset to CONFIGURED state, configuration preserved");
+    }
 
   public:
     SlaveDevice(uint16_t listenPort = 8081, uint32_t id = 0x3732485B)
@@ -132,10 +152,10 @@ class SlaveDevice {
                        "Processing sync message - Mode: %d, Timestamp: %u",
                        static_cast<int>(syncMsg->mode), syncMsg->timestamp);
 
-                // 根据TODO要求：收到Sync Message后开始采集
+                // 根据新逻辑：收到Sync Message后开始采集，不需要每次都配置
                 std::lock_guard<std::mutex> lock(stateMutex);
-                if (isConfigured &&
-                    deviceState == SlaveDeviceState::CONFIGURED) {
+                if (isConfigured) {
+                    // 如果已配置，无论当前状态如何，都可以开始新的数据采集
                     Log::i("MessageProcessor",
                            "Starting data collection based on sync message");
 
@@ -170,8 +190,9 @@ class SlaveDevice {
                        static_cast<int>(configMsg->timeSlot),
                        static_cast<int>(configMsg->interval));
 
-                // 根据TODO要求：收到Conduction Config
+                // 根据新逻辑：收到Conduction Config
                 // message后配置ContinuityCollector
+                // 并且保存配置，后续可以重复使用
                 std::lock_guard<std::mutex> lock(stateMutex);
 
                 // 创建采集器配置
@@ -195,6 +216,9 @@ class SlaveDevice {
                            currentConfig.num, currentConfig.startDetectionNum,
                            currentConfig.totalDetectionNum,
                            currentConfig.interval);
+                    Log::i("MessageProcessor",
+                           "Configuration saved for future use. Send Sync "
+                           "message to start collection.");
                 } else {
                     isConfigured = false;
                     deviceState = SlaveDeviceState::DEV_ERR;
@@ -284,12 +308,14 @@ class SlaveDevice {
                         deviceState = SlaveDeviceState::COLLECTION_COMPLETE;
                     }
 
-                    if (deviceState == SlaveDeviceState::COLLECTION_COMPLETE) {
-                        // 从采集器获取数据
-                        response->conductionData =
-                            continuityCollector->getDataVector();
-                        response->conductionLength =
-                            response->conductionData.size();
+                    // 无论当前状态，只要已配置过，都尝试获取最新数据
+                    // 从采集器获取数据
+                    response->conductionData =
+                        continuityCollector->getDataVector();
+                    response->conductionLength =
+                        response->conductionData.size();
+
+                    if (response->conductionLength > 0) {
                         Log::i("MessageProcessor",
                                "Retrieved %zu bytes of conduction data",
                                response->conductionLength);
@@ -297,8 +323,6 @@ class SlaveDevice {
                         Log::w("MessageProcessor",
                                "No collection data available, device state: %d",
                                static_cast<int>(deviceState));
-                        response->conductionLength = 0;
-                        response->conductionData.clear();
                     }
                 } else {
                     Log::w("MessageProcessor",
@@ -369,6 +393,9 @@ class SlaveDevice {
                 Log::i("MessageProcessor",
                        "Processing reset message - Lock status: %d",
                        static_cast<int>(rstMsg->lockStatus));
+
+                // 重置设备状态，但保留配置
+                resetDevice();
 
                 auto response =
                     std::make_unique<Slave2Master::RstResponseMessage>();
