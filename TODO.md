@@ -2,7 +2,7 @@
 
 ## 🚧 功能开发
 
-- [x] 为从机上电新增一个设备ID配置，传入u64的deviceID，并且进行格式检查，如果不输入则使用默认值
+- [ ] 从机程序启动后，新增输入Device ID然后再启动，默认Device ID 为0x00000001
 - [ ] 完成从机的数据采集功能。
 1. 收到Conduction Config message后根据消息中的信息配置ContinuityCollector
 ```cpp
@@ -40,5 +40,7 @@ response->conductionLength = response->conductionData.size();
 ## 🧹 技术债务
 
 ## 🐞 Bug 修复
+
+- [ ] 多从几文件有严重bug，发送两次Sync Message就必死机
 
 ## 📖 文档相关

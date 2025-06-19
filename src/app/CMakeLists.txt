@@ -5,10 +5,10 @@ cmake_minimum_required(VERSION 3.10)
 add_executable(main main.cpp)
 add_executable(Master master_main.cpp)
 add_executable(Slave slave_main.cpp)
-add_executable(MultiSlave multi_slave_main.cpp)
+# add_executable(MultiSlave multi_slave_main.cpp)
 
 # Set of all executables for common configuration
-set(ALL_EXECUTABLES main Master Slave MultiSlave)
+set(ALL_EXECUTABLES main Master Slave)
 
 # Apply common settings to all executables
 foreach(target ${ALL_EXECUTABLES})

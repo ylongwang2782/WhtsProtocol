@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <chrono>
 #include <iomanip>
+#include <iostream>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -423,19 +424,68 @@ class SlaveDevice {
     }
 };
 
+// Helper function to get Device ID from user input
+uint32_t getDeviceIdFromUser() {
+    std::string input;
+    uint32_t deviceId = 0x00000001; // Default value
+
+    std::cout << "\n=== WhtsProtocol Slave Device Configuration ==="
+              << std::endl;
+    std::cout << "Please enter Device ID (hex format, e.g., 0x3732485B)"
+              << std::endl;
+    std::cout << "Press Enter for default (0x00000001): ";
+
+    std::getline(std::cin, input);
+
+    // Trim whitespace
+    input.erase(input.find_last_not_of(" \t\r\n") + 1);
+    input.erase(0, input.find_first_not_of(" \t\r\n"));
+
+    if (!input.empty()) {
+        try {
+            // Support both 0x prefix and without prefix
+            if (input.substr(0, 2) == "0x" || input.substr(0, 2) == "0X") {
+                deviceId = std::stoul(input, nullptr, 16);
+            } else {
+                deviceId = std::stoul(input, nullptr, 16);
+            }
+            std::cout << "Using Device ID: 0x" << std::hex << std::uppercase
+                      << deviceId << std::endl;
+        } catch (const std::exception &e) {
+            std::cout << "Invalid input, using default Device ID: 0x00000001"
+                      << std::endl;
+            deviceId = 0x00000001;
+        }
+    } else {
+        std::cout << "Using default Device ID: 0x00000001" << std::endl;
+    }
+
+    return deviceId;
+}
+
 int main() {
     Log::i("Main", "WhtsProtocol Slave Device");
     Log::i("Main", "=========================");
-    Log::i("Main", "Port Configuration (Wireless Broadcast Simulation):");
-    Log::i("Main", "  Backend: 8079");
-    Log::i("Main", "  Master:  8080 (receives responses from Slaves)");
-    Log::i("Main", "  Slaves:  8081 (listen for Master broadcast commands)");
-    Log::i("Main", "Wireless Communication Simulation:");
-    Log::i("Main", "  Receives: Broadcast commands from Master");
-    Log::i("Main", "  Sends: Unicast responses to Master");
 
     try {
-        SlaveDevice device(8081, 0x3732485B);
+        // Get Device ID from user input
+        uint32_t deviceId = getDeviceIdFromUser();
+
+        // Display configuration after getting Device ID
+        Log::i("Main", "\nPort Configuration (Wireless Broadcast Simulation):");
+        Log::i("Main", "  Backend: 8079");
+        Log::i("Main", "  Master:  8080 (receives responses from Slaves)");
+        Log::i("Main",
+               "  Slaves:  8081 (listen for Master broadcast commands)");
+        Log::i("Main", "Wireless Communication Simulation:");
+        Log::i("Main", "  Receives: Broadcast commands from Master");
+        Log::i("Main", "  Sends: Unicast responses to Master");
+        Log::i("Main", "Device Configuration:");
+        Log::i("Main", "  Device ID: 0x%08X", deviceId);
+
+        std::cout << "\nStarting slave device..." << std::endl;
+
+        SlaveDevice device(8081, deviceId);
         device.run();
     } catch (const std::exception &e) {
         Log::e("Main", "Error: %s", e.what());
