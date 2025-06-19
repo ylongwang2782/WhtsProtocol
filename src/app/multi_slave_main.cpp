@@ -3,9 +3,11 @@
 #include "WhtsProtocol.h"
 #include <algorithm>
 #include <chrono>
+#include <condition_variable>
 #include <iomanip>
 #include <iostream>
 #include <memory>
+#include <mutex>
 #include <sstream>
 #include <string>
 #include <thread>
@@ -30,79 +32,54 @@ typedef int socklen_t;
 
 using namespace WhtsProtocol;
 
-class SlaveDevice {
+// Forward declaration
+class MultiSlaveManager;
+
+// Shared socket manager for broadcast reception
+class SharedSocketManager {
   private:
     SOCKET sock;
     sockaddr_in serverAddr;
+    bool running;
+    std::thread receiverThread;
+    MultiSlaveManager *manager;
+    std::mutex dataMutex;
+
+  public:
+    SharedSocketManager(uint16_t port, MultiSlaveManager *mgr);
+    ~SharedSocketManager();
+    void start();
+    void stop();
+    void receiverLoop();
+    SOCKET getSocket() const { return sock; }
+};
+
+class SlaveDevice {
+  private:
     sockaddr_in masterAddr; // Master address (port 8080)
     ProtocolProcessor processor;
-    uint16_t port;
     uint32_t deviceId;
     std::unique_ptr<Adapter::ContinuityCollector> continuityCollector;
     bool running;
-    bool collectorConfigured;  // Track if collector is configured
-    bool collectionInProgress; // Track if collection is in progress
+    bool collectorConfigured;           // Track if collector is configured
+    bool collectionInProgress;          // Track if collection is in progress
+    SharedSocketManager *socketManager; // Reference to shared socket manager
 
   public:
-    SlaveDevice(uint16_t listenPort, uint32_t id)
-        : port(listenPort), deviceId(id), running(false),
-          collectorConfigured(false), collectionInProgress(false) {
-#ifdef _WIN32
-        WSADATA wsaData;
-        if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0) {
-            throw std::runtime_error("WSAStartup failed");
-        }
-#endif
-
-        sock = socket(AF_INET, SOCK_DGRAM, 0);
-        if (sock == INVALID_SOCKET) {
-            throw std::runtime_error("Socket creation failed");
-        }
-
-        // Enable broadcast reception for the socket (to receive wireless
-        // broadcasts)
-        int broadcast = 1;
-        if (setsockopt(sock, SOL_SOCKET, SO_BROADCAST, (char *)&broadcast,
-                       sizeof(broadcast)) == SOCKET_ERROR) {
-            Log::w("Slave",
-                   "Failed to enable broadcast option for device 0x%08X",
-                   deviceId);
-        }
-
-        // Allow address reuse for multiple slaves on same port
-        int reuse = 1;
-        if (setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, (char *)&reuse,
-                       sizeof(reuse)) == SOCKET_ERROR) {
-            Log::w("Slave", "Failed to enable address reuse for device 0x%08X",
-                   deviceId);
-        }
-
-        // Configure server address (Slave listens on port 8081 for broadcasts)
-        serverAddr.sin_family = AF_INET;
-        serverAddr.sin_addr.s_addr =
-            INADDR_ANY; // Listen on all interfaces for broadcasts
-        serverAddr.sin_port = htons(port);
+    SlaveDevice(uint32_t id, SharedSocketManager *sockMgr)
+        : deviceId(id), running(false), collectorConfigured(false),
+          collectionInProgress(false), socketManager(sockMgr) {
 
         // Configure master address (Master uses port 8080)
         masterAddr.sin_family = AF_INET;
         masterAddr.sin_addr.s_addr = inet_addr("127.0.0.1"); // localhost
         masterAddr.sin_port = htons(8080);
 
-        if (bind(sock, (sockaddr *)&serverAddr, sizeof(serverAddr)) ==
-            SOCKET_ERROR) {
-            closesocket(sock);
-            throw std::runtime_error("Bind failed for device " +
-                                     std::to_string(deviceId));
-        }
-
         // Initialize continuity collector with virtual GPIO
         continuityCollector =
             Adapter::ContinuityCollectorFactory::createWithVirtualGpio();
 
-        Log::i("Slave", "Slave device (ID: 0x%08X) listening on port %d",
-               deviceId, port);
-        Log::i("Slave", "Master communication port: 8080");
-        Log::i("Slave", "Wireless broadcast reception enabled");
+        Log::i("Slave", "Slave device (ID: 0x%08X) initialized", deviceId);
     }
 
     ~SlaveDevice() {
@@ -111,11 +88,9 @@ class SlaveDevice {
         if (continuityCollector && collectionInProgress) {
             continuityCollector->stopCollection();
         }
-        closesocket(sock);
-#ifdef _WIN32
-        WSACleanup();
-#endif
     }
+
+    uint32_t getDeviceId() const { return deviceId; }
 
     // Get the current timestamp
     uint32_t getCurrentTimestamp() {
@@ -533,7 +508,8 @@ class SlaveDevice {
                         Log::i("ResponseSender",
                                "[0x%08X] Sending response:", deviceId);
 
-                        // Send all fragments
+                        // Send all fragments using shared socket
+                        SOCKET sock = socketManager->getSocket();
                         for (const auto &fragment : responseData) {
                             // Send response to master on port 8080
                             sendto(
@@ -561,38 +537,10 @@ class SlaveDevice {
         }
     }
 
-    // Main loop
-    void run() {
+    void start() {
         running = true;
         Log::i("Slave", "[0x%08X] Slave device started", deviceId);
-        Log::i("Slave", "[0x%08X] Device ID: 0x%08X, listening on port %d",
-               deviceId, deviceId, port);
-        Log::i("Slave", "[0x%08X] Handling Master2Slave broadcast packets",
-               deviceId);
-        Log::i("Slave", "[0x%08X] Sending responses to Master on port 8080",
-               deviceId);
-
-        char buffer[1024];
-        sockaddr_in senderAddr;
-        socklen_t senderAddrLen = sizeof(senderAddr);
-
         processor.setMTU(100);
-
-        while (running) {
-            int bytesReceived =
-                recvfrom(sock, buffer, sizeof(buffer), 0,
-                         (sockaddr *)&senderAddr, &senderAddrLen);
-
-            if (bytesReceived > 0) {
-                std::vector<uint8_t> data(buffer, buffer + bytesReceived);
-
-                processor.processReceivedData(data);
-                Frame receivedFrame;
-                while (processor.getNextCompleteFrame(receivedFrame)) {
-                    processFrame(receivedFrame, senderAddr);
-                }
-            }
-        }
     }
 
     void stop() {
@@ -602,23 +550,40 @@ class SlaveDevice {
             continuityCollector->stopCollection();
         }
     }
+
+    bool isRunning() const { return running; }
+    ProtocolProcessor &getProcessor() { return processor; }
 };
 
 // Multi-slave launcher
 class MultiSlaveManager {
   private:
     std::vector<std::unique_ptr<SlaveDevice>> slaves;
-    std::vector<std::thread> slaveThreads;
+    std::unique_ptr<SharedSocketManager> socketManager;
     bool running;
 
   public:
-    MultiSlaveManager() : running(false) {}
+    MultiSlaveManager() : running(false) {
+#ifdef _WIN32
+        WSADATA wsaData;
+        if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0) {
+            throw std::runtime_error("WSAStartup failed");
+        }
+#endif
+        socketManager = std::make_unique<SharedSocketManager>(8081, this);
+    }
 
-    ~MultiSlaveManager() { stop(); }
+    ~MultiSlaveManager() {
+        stop();
+#ifdef _WIN32
+        WSACleanup();
+#endif
+    }
 
     void addSlave(uint32_t deviceId) {
         try {
-            auto slave = std::make_unique<SlaveDevice>(8081, deviceId);
+            auto slave =
+                std::make_unique<SlaveDevice>(deviceId, socketManager.get());
             slaves.push_back(std::move(slave));
             Log::i("MultiSlave", "Added slave device 0x%08X", deviceId);
         } catch (const std::exception &e) {
@@ -631,11 +596,16 @@ class MultiSlaveManager {
         running = true;
         Log::i("MultiSlave", "Starting %zu slave devices...", slaves.size());
 
+        // Start all slave devices
         for (auto &slave : slaves) {
-            slaveThreads.emplace_back([&slave]() { slave->run(); });
+            slave->start();
         }
 
-        Log::i("MultiSlave", "All slave devices started");
+        // Start shared socket manager
+        socketManager->start();
+
+        Log::i("MultiSlave",
+               "All slave devices started with shared socket manager");
     }
 
     void stop() {
@@ -645,27 +615,140 @@ class MultiSlaveManager {
         running = false;
         Log::i("MultiSlave", "Stopping all slave devices...");
 
-        for (auto &slave : slaves) {
-            slave->stop();
+        // Stop socket manager first
+        if (socketManager) {
+            socketManager->stop();
         }
 
-        for (auto &thread : slaveThreads) {
-            if (thread.joinable()) {
-                thread.join();
-            }
+        // Stop all slaves
+        for (auto &slave : slaves) {
+            slave->stop();
         }
 
         Log::i("MultiSlave", "All slave devices stopped");
     }
 
     void waitForAll() {
-        for (auto &thread : slaveThreads) {
-            if (thread.joinable()) {
-                thread.join();
+        if (socketManager) {
+            // Just wait for socket manager since it handles all communication
+            while (running) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            }
+        }
+    }
+
+    // Process received data for all slaves
+    void processReceivedData(const std::vector<uint8_t> &data,
+                             const sockaddr_in &senderAddr) {
+        for (auto &slave : slaves) {
+            if (slave->isRunning()) {
+                slave->getProcessor().processReceivedData(data);
+                Frame receivedFrame;
+                while (
+                    slave->getProcessor().getNextCompleteFrame(receivedFrame)) {
+                    slave->processFrame(receivedFrame, senderAddr);
+                }
             }
         }
     }
 };
+
+// Shared socket manager implementation
+SharedSocketManager::SharedSocketManager(uint16_t port, MultiSlaveManager *mgr)
+    : sock(INVALID_SOCKET), running(false), manager(mgr) {
+
+    sock = socket(AF_INET, SOCK_DGRAM, 0);
+    if (sock == INVALID_SOCKET) {
+        throw std::runtime_error("Socket creation failed");
+    }
+
+    // Enable broadcast reception for the socket
+    int broadcast = 1;
+    if (setsockopt(sock, SOL_SOCKET, SO_BROADCAST, (char *)&broadcast,
+                   sizeof(broadcast)) == SOCKET_ERROR) {
+        Log::w("SharedSocket", "Failed to enable broadcast option");
+    }
+
+    // Configure server address
+    serverAddr.sin_family = AF_INET;
+    serverAddr.sin_addr.s_addr = INADDR_ANY;
+    serverAddr.sin_port = htons(port);
+
+    if (bind(sock, (sockaddr *)&serverAddr, sizeof(serverAddr)) ==
+        SOCKET_ERROR) {
+#ifdef _WIN32
+        int error = WSAGetLastError();
+        Log::e("SharedSocket", "Bind failed on port %d, error: %d", port,
+               error);
+#else
+        Log::e("SharedSocket", "Bind failed on port %d, errno: %d", port,
+               errno);
+#endif
+        closesocket(sock);
+        throw std::runtime_error("Bind failed on port " + std::to_string(port));
+    }
+
+    Log::i("SharedSocket", "Shared socket manager listening on port %d", port);
+}
+
+SharedSocketManager::~SharedSocketManager() {
+    stop();
+    if (sock != INVALID_SOCKET) {
+        closesocket(sock);
+    }
+}
+
+void SharedSocketManager::start() {
+    running = true;
+    receiverThread = std::thread(&SharedSocketManager::receiverLoop, this);
+    Log::i("SharedSocket", "Shared socket manager started");
+}
+
+void SharedSocketManager::stop() {
+    if (!running)
+        return;
+
+    running = false;
+    if (receiverThread.joinable()) {
+        receiverThread.join();
+    }
+    Log::i("SharedSocket", "Shared socket manager stopped");
+}
+
+void SharedSocketManager::receiverLoop() {
+    char buffer[1024];
+    sockaddr_in senderAddr;
+    socklen_t senderAddrLen = sizeof(senderAddr);
+
+    Log::i("SharedSocket", "Receiver loop started");
+
+    while (running) {
+        int bytesReceived = recvfrom(sock, buffer, sizeof(buffer), 0,
+                                     (sockaddr *)&senderAddr, &senderAddrLen);
+
+        if (bytesReceived > 0) {
+            std::vector<uint8_t> data(buffer, buffer + bytesReceived);
+
+            // Process data for all slaves
+            if (manager) {
+                manager->processReceivedData(data, senderAddr);
+            }
+        } else if (bytesReceived == SOCKET_ERROR) {
+#ifdef _WIN32
+            int error = WSAGetLastError();
+            if (error != WSAEWOULDBLOCK && running) {
+                Log::e("SharedSocket", "Receive error: %d", error);
+            }
+#else
+            if (errno != EAGAIN && errno != EWOULDBLOCK && running) {
+                Log::e("SharedSocket", "Receive error: %d", errno);
+            }
+#endif
+        }
+    }
+
+    Log::i("SharedSocket", "Receiver loop ended");
+}
 
 int main() {
     Log::i("Main", "WhtsProtocol Multi-Slave Device Simulator");
@@ -673,10 +756,12 @@ int main() {
     Log::i("Main", "Port Configuration (Wireless Broadcast Simulation):");
     Log::i("Main", "  Backend: 8079");
     Log::i("Main", "  Master:  8080 (receives responses from Slaves)");
-    Log::i("Main", "  Slaves:  8081 (listen for Master broadcast commands)");
+    Log::i("Main", "  Slaves:  8081 (shared socket for broadcast reception)");
     Log::i("Main", "Wireless Communication Simulation:");
-    Log::i("Main", "  Receives: Broadcast commands from Master");
-    Log::i("Main", "  Sends: Unicast responses to Master");
+    Log::i("Main",
+           "  Receives: Broadcast commands from Master (shared socket)");
+    Log::i("Main",
+           "  Sends: Unicast responses to Master (individual processing)");
 
     try {
         MultiSlaveManager manager;
@@ -711,7 +796,7 @@ int main() {
             Log::i("Main", "  [%zu] Device ID: 0x%08X", i + 1, deviceIds[i]);
         }
 
-        Log::i("Main", "Starting multi-slave simulation...");
+        Log::i("Main", "Starting multi-slave simulation with shared socket...");
         manager.start();
 
         Log::i("Main", "Multi-slave simulation running. Press Ctrl+C to exit");

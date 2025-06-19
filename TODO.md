@@ -32,10 +32,10 @@ response->conductionLength = response->conductionData.size();
 ```
 
 - [ ] 完善主机的数据采集逻辑。
-当主机被MODE_CFG_MSG配置为启动模式后，需要开始不断从从机获得数据
-1. 发送Sync Message，这将让所有从机开始采集数据
-2. 等待所有从机数据采集完成后，根据当前模式发送Read conduction data Message从从机读取相应数据
-3. 接收到从机的CONDUCTION_DATA_MSG后，将其转发给后端
+当主机被MODE_CFG_MSG配置为启动模式后，开始不断从从机读取数据，整个流程描述如下
+1. 主机发送Sync Message，这将让所有从机开始采集数据
+2. 主机等待所有从机数据采集完成后，发送Read conduction data Message从从机读取相应数据
+3. 主机接收到从机的CONDUCTION_DATA_MSG后，将原始数据不经过处理直接转发给后端
 
 ## 🧹 技术债务
 
