@@ -5,8 +5,10 @@
 #include <chrono>
 #include <iomanip>
 #include <iostream>
+#include <mutex>
 #include <sstream>
 #include <string>
+#include <thread>
 #include <vector>
 
 #ifdef _WIN32
@@ -28,6 +30,15 @@ typedef int socklen_t;
 
 using namespace WhtsProtocol;
 
+// 从机设备状态枚举
+enum class SlaveDeviceState {
+    IDLE,                // 空闲状态
+    CONFIGURED,          // 已配置状态
+    COLLECTING,          // 采集中状态
+    COLLECTION_COMPLETE, // 采集完成状态
+    DEV_ERR              // 错误状态
+};
+
 class SlaveDevice {
   private:
     SOCKET sock;
@@ -38,9 +49,16 @@ class SlaveDevice {
     uint32_t deviceId;
     std::unique_ptr<Adapter::ContinuityCollector> continuityCollector;
 
+    // 新增状态管理
+    SlaveDeviceState deviceState;
+    Adapter::CollectorConfig currentConfig;
+    bool isConfigured;
+    std::mutex stateMutex;
+
   public:
     SlaveDevice(uint16_t listenPort = 8081, uint32_t id = 0x3732485B)
-        : port(listenPort), deviceId(id) {
+        : port(listenPort), deviceId(id), deviceState(SlaveDeviceState::IDLE),
+          isConfigured(false) {
 #ifdef _WIN32
         WSADATA wsaData;
         if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0) {
@@ -113,6 +131,29 @@ class SlaveDevice {
                 Log::i("MessageProcessor",
                        "Processing sync message - Mode: %d, Timestamp: %u",
                        static_cast<int>(syncMsg->mode), syncMsg->timestamp);
+
+                // 根据TODO要求：收到Sync Message后开始采集
+                std::lock_guard<std::mutex> lock(stateMutex);
+                if (isConfigured &&
+                    deviceState == SlaveDeviceState::CONFIGURED) {
+                    Log::i("MessageProcessor",
+                           "Starting data collection based on sync message");
+
+                    // 开始采集
+                    if (continuityCollector->startCollection()) {
+                        deviceState = SlaveDeviceState::COLLECTING;
+                        Log::i("MessageProcessor",
+                               "Data collection started successfully");
+                    } else {
+                        Log::e("MessageProcessor",
+                               "Failed to start data collection");
+                        deviceState = SlaveDeviceState::DEV_ERR;
+                    }
+                } else {
+                    Log::w("MessageProcessor",
+                           "Device not configured, cannot start collection");
+                }
+
                 return nullptr;
             }
             break;
@@ -129,9 +170,41 @@ class SlaveDevice {
                        static_cast<int>(configMsg->timeSlot),
                        static_cast<int>(configMsg->interval));
 
+                // 根据TODO要求：收到Conduction Config
+                // message后配置ContinuityCollector
+                std::lock_guard<std::mutex> lock(stateMutex);
+
+                // 创建采集器配置
+                currentConfig = Adapter::CollectorConfig(
+                    static_cast<uint8_t>(
+                        configMsg->conductionNum), // 导通检测数量
+                    static_cast<uint8_t>(
+                        configMsg->startConductionNum), // 开始检测数量
+                    static_cast<uint8_t>(
+                        configMsg->totalConductionNum),        // 总检测数量
+                    static_cast<uint32_t>(configMsg->interval) // 检测间隔(ms)
+                );
+
+                // 配置采集器
+                if (continuityCollector->configure(currentConfig)) {
+                    isConfigured = true;
+                    deviceState = SlaveDeviceState::CONFIGURED;
+                    Log::i("MessageProcessor",
+                           "ContinuityCollector configured successfully - "
+                           "Pins: %d, Start: %d, Total: %d, Interval: %dms",
+                           currentConfig.num, currentConfig.startDetectionNum,
+                           currentConfig.totalDetectionNum,
+                           currentConfig.interval);
+                } else {
+                    isConfigured = false;
+                    deviceState = SlaveDeviceState::DEV_ERR;
+                    Log::e("MessageProcessor",
+                           "Failed to configure ContinuityCollector");
+                }
+
                 auto response = std::make_unique<
                     Slave2Master::ConductionConfigResponseMessage>();
-                response->status = 0; // Success
+                response->status = isConfigured ? 0 : 1; // 0=Success, 1=Error
                 response->timeSlot = configMsg->timeSlot;
                 response->interval = configMsg->interval;
                 response->totalConductionNum = configMsg->totalConductionNum;
@@ -196,24 +269,44 @@ class SlaveDevice {
 
                 auto response =
                     std::make_unique<Slave2Backend::ConductionDataMessage>();
-                // 创建采集器
-                auto collector = Adapter::ContinuityCollectorFactory::
-                    createWithVirtualGpio();
 
-                // 配置采集
-                Adapter::CollectorConfig config(
-                    2, 0, 4, 20); // 2引脚, 从周期0开始, 总共4周期, 20ms间隔
-                collector->configure(config);
+                // 根据TODO要求：从已配置的Collector获得数据并创建response
+                std::lock_guard<std::mutex> lock(stateMutex);
 
-                // 开始采集
-                collector->startCollection();
+                if (isConfigured && continuityCollector) {
+                    // 检查采集状态
+                    if (deviceState == SlaveDeviceState::COLLECTING) {
+                        // 等待完成并获取数据
+                        while (!continuityCollector->isCollectionComplete()) {
+                            std::this_thread::sleep_for(
+                                std::chrono::milliseconds(100));
+                        }
+                        deviceState = SlaveDeviceState::COLLECTION_COMPLETE;
+                    }
 
-                // 等待完成并获取数据
-                while (!collector->isCollectionComplete()) {
-                    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                    if (deviceState == SlaveDeviceState::COLLECTION_COMPLETE) {
+                        // 从采集器获取数据
+                        response->conductionData =
+                            continuityCollector->getDataVector();
+                        response->conductionLength =
+                            response->conductionData.size();
+                        Log::i("MessageProcessor",
+                               "Retrieved %zu bytes of conduction data",
+                               response->conductionLength);
+                    } else {
+                        Log::w("MessageProcessor",
+                               "No collection data available, device state: %d",
+                               static_cast<int>(deviceState));
+                        response->conductionLength = 0;
+                        response->conductionData.clear();
+                    }
+                } else {
+                    Log::w("MessageProcessor",
+                           "Device not configured or collector not available");
+                    response->conductionLength = 0;
+                    response->conductionData.clear();
                 }
-                response->conductionData = collector->getDataVector();
-                response->conductionLength = response->conductionData.size();
+
                 return std::move(response);
             }
 

@@ -2,7 +2,7 @@
 
 ## 🚧 功能开发
 
-- [ ] 从机程序启动后，新增输入Device ID然后再启动，默认Device ID 为0x00000001
+- [x] 从机程序启动后，新增输入Device ID然后再启动，默认Device ID 为0x00000001
 - [ ] 完成从机的数据采集功能。
 1. 收到Conduction Config message后根据消息中的信息配置ContinuityCollector
 ```cpp
