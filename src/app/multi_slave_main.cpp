@@ -40,10 +40,13 @@ class SlaveDevice {
     uint32_t deviceId;
     std::unique_ptr<Adapter::ContinuityCollector> continuityCollector;
     bool running;
+    bool collectorConfigured;  // Track if collector is configured
+    bool collectionInProgress; // Track if collection is in progress
 
   public:
     SlaveDevice(uint16_t listenPort, uint32_t id)
-        : port(listenPort), deviceId(id), running(false) {
+        : port(listenPort), deviceId(id), running(false),
+          collectorConfigured(false), collectionInProgress(false) {
 #ifdef _WIN32
         WSADATA wsaData;
         if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0) {
@@ -104,6 +107,10 @@ class SlaveDevice {
 
     ~SlaveDevice() {
         running = false;
+        // Stop data collection if in progress
+        if (continuityCollector && collectionInProgress) {
+            continuityCollector->stopCollection();
+        }
         closesocket(sock);
 #ifdef _WIN32
         WSACleanup();
@@ -130,6 +137,23 @@ class SlaveDevice {
                        "Timestamp: %u",
                        deviceId, static_cast<int>(syncMsg->mode),
                        syncMsg->timestamp);
+
+                // Start collection if collector is configured and not already
+                // in progress
+                if (collectorConfigured && !collectionInProgress) {
+                    Log::i("MessageProcessor",
+                           "[0x%08X] Starting data collection", deviceId);
+                    if (continuityCollector->startCollection()) {
+                        collectionInProgress = true;
+                        Log::i("MessageProcessor",
+                               "[0x%08X] Data collection started successfully",
+                               deviceId);
+                    } else {
+                        Log::e("MessageProcessor",
+                               "[0x%08X] Failed to start data collection",
+                               deviceId);
+                    }
+                }
                 // Sync messages typically don't have responses
             }
             break;
@@ -146,14 +170,153 @@ class SlaveDevice {
                        deviceId, static_cast<int>(configMsg->timeSlot),
                        static_cast<int>(configMsg->interval));
 
+                // Configure ContinuityCollector based on message parameters
+                Adapter::CollectorConfig config(
+                    configMsg->conductionNum, // num: 导通检测数量
+                    configMsg
+                        ->startConductionNum, // startDetectionNum: 开始检测数量
+                    configMsg
+                        ->totalConductionNum, // totalDetectionNum: 总检测数量
+                    configMsg->interval       // interval: 检测间隔 (convert to
+                                              // milliseconds)
+                );
+
+                if (continuityCollector->configure(config)) {
+                    collectorConfigured = true;
+                    Log::i(
+                        "MessageProcessor",
+                        "[0x%08X] ContinuityCollector configured successfully",
+                        deviceId);
+                    Log::i("MessageProcessor",
+                           "[0x%08X] Config - Num: %d, Start: %d, Total: %d, "
+                           "Interval: %dms",
+                           deviceId, config.num, config.startDetectionNum,
+                           config.totalDetectionNum, config.interval);
+                } else {
+                    collectorConfigured = false;
+                    Log::e("MessageProcessor",
+                           "[0x%08X] Failed to configure ContinuityCollector",
+                           deviceId);
+                }
+
                 auto response = std::make_unique<
                     Slave2Master::ConductionConfigResponseMessage>();
-                response->status = 0; // Success
+                response->status =
+                    collectorConfigured ? 0 : 1; // Success/Failure
                 response->timeSlot = configMsg->timeSlot;
                 response->interval = configMsg->interval;
                 response->totalConductionNum = configMsg->totalConductionNum;
                 response->startConductionNum = configMsg->startConductionNum;
                 response->conductionNum = configMsg->conductionNum;
+                return std::move(response);
+            }
+            break;
+        }
+
+        case static_cast<uint8_t>(Master2SlaveMessageId::READ_COND_DATA_MSG): {
+            const auto *readDataMsg =
+                dynamic_cast<const Master2Slave::ReadConductionDataMessage *>(
+                    &request);
+            if (readDataMsg) {
+                Log::i("MessageProcessor",
+                       "[0x%08X] Processing read conduction data request",
+                       deviceId);
+
+                auto response =
+                    std::make_unique<Slave2Backend::ConductionDataMessage>();
+
+                if (collectorConfigured) {
+                    // Wait for collection to complete if it's still in progress
+                    if (collectionInProgress) {
+                        Log::i("MessageProcessor",
+                               "[0x%08X] Waiting for data collection to "
+                               "complete...",
+                               deviceId);
+                        while (!continuityCollector->isCollectionComplete() &&
+                               collectionInProgress) {
+                            std::this_thread::sleep_for(
+                                std::chrono::milliseconds(100));
+                        }
+                        collectionInProgress = false;
+                        Log::i("MessageProcessor",
+                               "[0x%08X] Data collection completed", deviceId);
+                    }
+
+                    // Get data from collector
+                    response->conductionData =
+                        continuityCollector->getDataVector();
+                    response->conductionLength =
+                        static_cast<uint16_t>(response->conductionData.size());
+
+                    Log::i(
+                        "MessageProcessor",
+                        "[0x%08X] Retrieved conduction data, length: %d bytes",
+                        deviceId, response->conductionLength);
+                } else {
+                    // Return empty data if collector is not configured
+                    response->conductionData = {};
+                    response->conductionLength = 0;
+                    Log::w("MessageProcessor",
+                           "[0x%08X] Collector not configured, returning empty "
+                           "data",
+                           deviceId);
+                }
+
+                return std::move(response);
+            }
+            break;
+        }
+
+        case static_cast<uint8_t>(Master2SlaveMessageId::READ_RES_DATA_MSG): {
+            const auto *readDataMsg =
+                dynamic_cast<const Master2Slave::ReadResistanceDataMessage *>(
+                    &request);
+            if (readDataMsg) {
+                Log::i("MessageProcessor",
+                       "[0x%08X] Processing read resistance data request",
+                       deviceId);
+
+                auto response =
+                    std::make_unique<Slave2Backend::ResistanceDataMessage>();
+
+                if (collectorConfigured) {
+                    // Wait for collection to complete if it's still in progress
+                    if (collectionInProgress) {
+                        Log::i("MessageProcessor",
+                               "[0x%08X] Waiting for data collection to "
+                               "complete...",
+                               deviceId);
+                        while (!continuityCollector->isCollectionComplete() &&
+                               collectionInProgress) {
+                            std::this_thread::sleep_for(
+                                std::chrono::milliseconds(100));
+                        }
+                        collectionInProgress = false;
+                        Log::i("MessageProcessor",
+                               "[0x%08X] Data collection completed", deviceId);
+                    }
+
+                    // Get data from collector (same data for resistance
+                    // measurement)
+                    response->resistanceData =
+                        continuityCollector->getDataVector();
+                    response->resistanceLength =
+                        static_cast<uint16_t>(response->resistanceData.size());
+
+                    Log::i(
+                        "MessageProcessor",
+                        "[0x%08X] Retrieved resistance data, length: %d bytes",
+                        deviceId, response->resistanceLength);
+                } else {
+                    // Return empty data if collector is not configured
+                    response->resistanceData = {};
+                    response->resistanceLength = 0;
+                    Log::w("MessageProcessor",
+                           "[0x%08X] Collector not configured, returning empty "
+                           "data",
+                           deviceId);
+                }
+
                 return std::move(response);
             }
             break;
@@ -170,14 +333,63 @@ class SlaveDevice {
                        deviceId, static_cast<int>(configMsg->timeSlot),
                        static_cast<int>(configMsg->interval));
 
+                // Configure ContinuityCollector for resistance measurement
+                // (similar to conduction)
+                Adapter::CollectorConfig config(
+                    configMsg->num,      // num: 检测数量
+                    configMsg->startNum, // startDetectionNum: 开始检测数量
+                    configMsg->totalNum, // totalDetectionNum: 总检测数量
+                    configMsg->interval *
+                        1000 // interval: 检测间隔 (convert to milliseconds)
+                );
+
+                if (continuityCollector->configure(config)) {
+                    collectorConfigured = true;
+                    Log::i("MessageProcessor",
+                           "[0x%08X] ContinuityCollector configured for "
+                           "resistance measurement",
+                           deviceId);
+                } else {
+                    collectorConfigured = false;
+                    Log::e("MessageProcessor",
+                           "[0x%08X] Failed to configure ContinuityCollector "
+                           "for resistance",
+                           deviceId);
+                }
+
                 auto response = std::make_unique<
                     Slave2Master::ResistanceConfigResponseMessage>();
-                response->status = 0; // Success
+                response->status =
+                    collectorConfigured ? 0 : 1; // Success/Failure
                 response->timeSlot = configMsg->timeSlot;
                 response->interval = configMsg->interval;
                 response->totalConductionNum = configMsg->totalNum;
                 response->startConductionNum = configMsg->startNum;
                 response->conductionNum = configMsg->num;
+                return std::move(response);
+            }
+            break;
+        }
+
+        case static_cast<uint8_t>(Master2SlaveMessageId::READ_CLIP_DATA_MSG): {
+            const auto *readDataMsg =
+                dynamic_cast<const Master2Slave::ReadClipDataMessage *>(
+                    &request);
+            if (readDataMsg) {
+                Log::i("MessageProcessor",
+                       "[0x%08X] Processing read clip data request", deviceId);
+
+                auto response =
+                    std::make_unique<Slave2Backend::ClipDataMessage>();
+
+                // For clip data, we return a simple status value
+                // This could be enhanced to return actual clip detection data
+                response->clipData = 0xFF; // Default clip detected value
+
+                Log::i("MessageProcessor",
+                       "[0x%08X] Retrieved clip data: 0x%04X", deviceId,
+                       response->clipData);
+
                 return std::move(response);
             }
             break;
@@ -383,7 +595,13 @@ class SlaveDevice {
         }
     }
 
-    void stop() { running = false; }
+    void stop() {
+        running = false;
+        // Stop data collection if in progress
+        if (continuityCollector && collectionInProgress) {
+            continuityCollector->stopCollection();
+        }
+    }
 };
 
 // Multi-slave launcher
