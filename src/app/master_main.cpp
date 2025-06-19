@@ -33,6 +33,41 @@ using namespace WhtsProtocol;
 // Forward declarations
 class MasterServer;
 
+// Data Collection Management structure
+struct DataCollectionInfo {
+    uint32_t slaveId;           // 从机ID
+    uint32_t startTimestamp;    // 开始采集时间戳
+    uint32_t estimatedDuration; // 估计采集时长(毫秒)
+    bool dataRequested;         // 是否已发送数据请求
+    bool dataReceived;          // 是否已接收数据
+
+    DataCollectionInfo(uint32_t id, uint32_t duration)
+        : slaveId(id), startTimestamp(0), estimatedDuration(duration),
+          dataRequested(false), dataReceived(false) {}
+
+    // 计算是否采集完成
+    bool isCollectionComplete(uint32_t currentTime) const {
+        return startTimestamp > 0 &&
+               (currentTime - startTimestamp >= estimatedDuration);
+    }
+};
+
+// 采集周期状态枚举
+enum class CollectionCycleState {
+    IDLE,         // 空闲状态
+    COLLECTING,   // 正在采集
+    READING_DATA, // 正在读取数据
+    COMPLETE      // 完成一个周期
+};
+
+// 获取当前时间戳（毫秒）
+inline uint32_t getCurrentTimestampMs() {
+    return static_cast<uint32_t>(
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now().time_since_epoch())
+            .count());
+}
+
 // Command tracking for timeout and retry management
 struct PendingCommand {
     uint32_t slaveId;
@@ -93,11 +128,23 @@ class DeviceManager {
     std::unordered_map<uint32_t, uint8_t> slaveShortIds;
     std::unordered_map<uint32_t, Backend2Master::SlaveConfigMessage::SlaveInfo>
         slaveConfigs;
-    uint8_t currentMode;
-    uint8_t systemRunningStatus;
+    uint8_t currentMode;         // 0=Conduction, 1=Resistance, 2=Clip
+    uint8_t systemRunningStatus; // 0=Stop, 1=Run, 2=Reset
+
+    // 数据采集管理
+    std::vector<DataCollectionInfo> activeCollections;
+    bool dataCollectionActive;
+    CollectionCycleState cycleState; // 当前采集周期状态
+    uint32_t cycleStartTime;         // 周期开始时间
+    uint32_t lastCycleTime;          // 上次完成周期的时间
+    uint32_t cycleInterval;          // 采集周期间隔(毫秒)
+    bool syncSent;                   // 是否已发送同步消息
 
   public:
-    DeviceManager() : currentMode(0), systemRunningStatus(0) {}
+    DeviceManager()
+        : currentMode(0), systemRunningStatus(0), dataCollectionActive(false),
+          cycleState(CollectionCycleState::IDLE), cycleStartTime(0),
+          lastCycleTime(0), cycleInterval(5000), syncSent(false) {}
 
     void addSlave(uint32_t slaveId, uint8_t shortId = 0) {
         connectedSlaves[slaveId] = true;
@@ -156,6 +203,222 @@ class DeviceManager {
         systemRunningStatus = status;
     }
     uint8_t getSystemRunningStatus() const { return systemRunningStatus; }
+
+    // 数据采集管理
+    void startDataCollection() {
+        activeCollections.clear();
+
+        // 为每个已配置的从机创建采集信息
+        for (const auto &pair : slaveConfigs) {
+            if (isSlaveConnected(pair.first)) {
+                uint32_t slaveId = pair.first;
+                const auto &config = pair.second;
+
+                uint32_t duration = 0;
+
+                // 根据当前模式选择配置参数和估算采集时间
+                switch (currentMode) {
+                case 0: // Conduction模式
+                    duration =
+                        config.conductionNum * 100 + 500; // 添加额外的500ms缓冲
+                    break;
+                case 1: // Resistance模式
+                    duration = config.resistanceNum * 100 + 500;
+                    break;
+                case 2:              // Clip模式
+                    duration = 1000; // Clip模式估计1秒钟完成
+                    break;
+                }
+
+                activeCollections.emplace_back(slaveId, duration);
+            }
+        }
+
+        dataCollectionActive = !activeCollections.empty();
+        cycleState = CollectionCycleState::IDLE;
+        syncSent = false;
+        lastCycleTime = 0; // 重置上次周期完成时间
+
+        Log::i("DeviceManager",
+               "Data collection started, mode: %d, active slaves: %zu",
+               currentMode, activeCollections.size());
+    }
+
+    void resetDataCollection() {
+        activeCollections.clear();
+        dataCollectionActive = false;
+        cycleState = CollectionCycleState::IDLE;
+        syncSent = false;
+
+        Log::i("DeviceManager", "Data collection reset");
+    }
+
+    // 开始一个新的采集周期
+    void startNewCycle(uint32_t currentTime) {
+        cycleState = CollectionCycleState::COLLECTING;
+        cycleStartTime = currentTime;
+        syncSent = false;
+
+        // 重置所有从机的采集状态
+        for (auto &collection : activeCollections) {
+            collection.startTimestamp = 0;
+            collection.dataRequested = false;
+            collection.dataReceived = false;
+        }
+
+        Log::i("DeviceManager", "Starting new collection cycle at time %u",
+               currentTime);
+    }
+
+    // 标记同步消息已发送
+    void markSyncSent(uint32_t timestamp) {
+        syncSent = true;
+        for (auto &collection : activeCollections) {
+            collection.startTimestamp = timestamp;
+            collection.dataRequested = false;
+            collection.dataReceived = false;
+        }
+        Log::i("DeviceManager", "Sync message sent at time %u", timestamp);
+    }
+
+    // 是否应该进入数据读取阶段
+    bool shouldEnterReadingPhase(uint32_t currentTime) {
+        if (cycleState != CollectionCycleState::COLLECTING || !syncSent) {
+            return false;
+        }
+
+        // 检查所有从机是否已完成采集
+        bool allComplete = true;
+        for (const auto &collection : activeCollections) {
+            if (!collection.isCollectionComplete(currentTime)) {
+                allComplete = false;
+                break;
+            }
+        }
+
+        return allComplete;
+    }
+
+    // 进入数据读取阶段
+    void enterReadingPhase() {
+        cycleState = CollectionCycleState::READING_DATA;
+        Log::i("DeviceManager", "Entering data reading phase");
+    }
+
+    // 标记开始同步采集 (旧方法，为保持兼容)
+    void markCollectionStarted(uint32_t timestamp) { markSyncSent(timestamp); }
+
+    // 检查某个从机的采集是否完成
+    bool isSlaveCollectionComplete(uint32_t slaveId, uint32_t currentTime) {
+        for (const auto &collection : activeCollections) {
+            if (collection.slaveId == slaveId) {
+                return collection.isCollectionComplete(currentTime);
+            }
+        }
+        return false;
+    }
+
+    // 标记数据已请求
+    void markDataRequested(uint32_t slaveId) {
+        for (auto &collection : activeCollections) {
+            if (collection.slaveId == slaveId) {
+                collection.dataRequested = true;
+                break;
+            }
+        }
+    }
+
+    // 标记数据已接收
+    void markDataReceived(uint32_t slaveId) {
+        for (auto &collection : activeCollections) {
+            if (collection.slaveId == slaveId) {
+                collection.dataReceived = true;
+                break;
+            }
+        }
+
+        // 检查是否所有数据都已接收，如果是则完成本周期
+        if (isAllDataReceived()) {
+            cycleState = CollectionCycleState::COMPLETE;
+            uint32_t currentTime = getCurrentTimestampMs();
+            lastCycleTime = currentTime;
+            Log::i("DeviceManager", "Collection cycle completed at time %u",
+                   lastCycleTime);
+        }
+    }
+
+    // 获取所有可以请求数据的从机列表 (旧方法，为保持兼容)
+    std::vector<uint32_t> getSlavesReadyForDataRequest(uint32_t currentTime) {
+        return getSlavesForDataRequest();
+    }
+
+    // 获取所有未请求数据的从机列表
+    std::vector<uint32_t> getSlavesForDataRequest() {
+        std::vector<uint32_t> readySlaves;
+
+        if (cycleState != CollectionCycleState::READING_DATA) {
+            return readySlaves;
+        }
+
+        for (const auto &collection : activeCollections) {
+            if (!collection.dataRequested) {
+                readySlaves.push_back(collection.slaveId);
+            }
+        }
+
+        return readySlaves;
+    }
+
+    // 检查所有从机是否都已接收数据
+    bool isAllDataReceived() {
+        if (activeCollections.empty()) {
+            return false;
+        }
+
+        for (const auto &collection : activeCollections) {
+            if (!collection.dataReceived) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    // 检查是否应该开始新的采集周期
+    bool shouldStartNewCycle(uint32_t currentTime) {
+        // 如果没有处于运行状态，则不开始新周期
+        if (systemRunningStatus != 1) {
+            return false;
+        }
+
+        // 如果当前正在采集中，则不开始新周期
+        if (cycleState != CollectionCycleState::IDLE &&
+            cycleState != CollectionCycleState::COMPLETE) {
+            return false;
+        }
+
+        // 如果是首次采集或者距离上次采集完成已经超过了周期间隔
+        return lastCycleTime == 0 ||
+               (currentTime - lastCycleTime >= cycleInterval);
+    }
+
+    // 获取当前采集周期状态
+    CollectionCycleState getCycleState() const { return cycleState; }
+
+    // 是否已发送同步消息
+    bool isSyncSent() const { return syncSent; }
+
+    // 设置采集周期间隔
+    void setCycleInterval(uint32_t interval) {
+        cycleInterval = interval;
+        Log::i("DeviceManager", "Set cycle interval to %u ms", interval);
+    }
+
+    // 获取采集周期间隔
+    uint32_t getCycleInterval() const { return cycleInterval; }
+
+    // 是否有活跃的数据采集
+    bool isDataCollectionActive() const { return dataCollectionActive; }
 };
 
 class MasterServer {
@@ -207,6 +470,9 @@ class MasterServer {
                         uint16_t totalCount, uint16_t interval,
                         const sockaddr_in &clientAddr);
     void processPingSessions();
+
+    // 数据采集管理
+    void processDataCollection();
 
     // Device management
     DeviceManager &getDeviceManager() { return deviceManager; }
@@ -471,95 +737,102 @@ class ControlHandler : public IMessageHandler {
   public:
     std::unique_ptr<Message> processMessage(const Message &message,
                                             MasterServer *server) override {
-        const auto *ctrlMsg =
+        const auto *controlMsg =
             dynamic_cast<const Backend2Master::CtrlMessage *>(&message);
-        if (!ctrlMsg)
+        if (!controlMsg)
             return nullptr;
 
         Log::i("ControlHandler",
                "Processing control message - Running status: %d",
-               static_cast<int>(ctrlMsg->runningStatus));
+               static_cast<int>(controlMsg->runningStatus));
 
         auto response = std::make_unique<Master2Backend::CtrlResponseMessage>();
         response->status = 0; // Success
-        response->runningStatus = ctrlMsg->runningStatus;
+        response->runningStatus = controlMsg->runningStatus;
 
         return std::move(response);
     }
 
     void executeActions(const Message &message, MasterServer *server) override {
-        const auto *ctrlMsg =
+        const auto *controlMsg =
             dynamic_cast<const Backend2Master::CtrlMessage *>(&message);
-        if (!ctrlMsg)
+        if (!controlMsg)
             return;
 
-        // Store system running status
-        server->getDeviceManager().setSystemRunningStatus(
-            ctrlMsg->runningStatus);
+        auto &deviceManager = server->getDeviceManager();
 
-        // Apply control command based on running status
-        auto connectedSlaves = server->getDeviceManager().getConnectedSlaves();
-        int commandsSent = 0;
+        // 保存当前运行状态
+        deviceManager.setSystemRunningStatus(controlMsg->runningStatus);
 
-        switch (ctrlMsg->runningStatus) {
-        case 0: // Stop/Pause system
-        {
-            Log::i("ControlHandler", "Stopping system operations");
-            // Send stop commands to all connected slaves if needed
-            for (uint32_t slaveId : connectedSlaves) {
-                // For now, we could send a sync message to coordinate stopping
-                auto syncCmd = std::make_unique<Master2Slave::SyncMessage>();
-                syncCmd->mode = 0; // Stop mode
-                syncCmd->timestamp = MasterServer::getCurrentTimestamp();
+        Log::i("ControlHandler", "Setting system running status to %d",
+               static_cast<int>(controlMsg->runningStatus));
 
-                server->sendCommandToSlaveWithRetry(slaveId, std::move(syncCmd),
-                                                    sockaddr_in{}, 2);
-                commandsSent++;
+        // 根据运行状态执行操作
+        switch (controlMsg->runningStatus) {
+        case 0: // 停止
+            Log::i("ControlHandler", "Stopping all operations");
+
+            // 停止所有数据采集
+            deviceManager.resetDataCollection();
+
+            // 向所有从机发送停止信号
+            for (uint32_t slaveId : deviceManager.getConnectedSlaves()) {
+                if (deviceManager.hasSlaveConfig(slaveId)) {
+                    // 发送同步消息但设置模式为0（停止）
+                    auto syncCmd =
+                        std::make_unique<Master2Slave::SyncMessage>();
+                    syncCmd->mode = 0; // 停止模式
+                    syncCmd->timestamp = getCurrentTimestampMs();
+
+                    server->sendCommandToSlaveWithRetry(
+                        slaveId, std::move(syncCmd), sockaddr_in{}, 1);
+                }
             }
-        } break;
+            break;
 
-        case 1: // Start/Resume system
-        {
-            Log::i("ControlHandler", "Starting system operations");
-            // Send start commands and apply current mode configuration
-            uint8_t currentMode = server->getDeviceManager().getCurrentMode();
-            for (uint32_t slaveId : connectedSlaves) {
-                // Send sync message to start operations
-                auto syncCmd = std::make_unique<Master2Slave::SyncMessage>();
-                syncCmd->mode = currentMode;
-                syncCmd->timestamp = MasterServer::getCurrentTimestamp();
+        case 1: // 启动
+            Log::i("ControlHandler", "Starting operations in mode %d",
+                   static_cast<int>(deviceManager.getCurrentMode()));
 
-                server->sendCommandToSlaveWithRetry(slaveId, std::move(syncCmd),
-                                                    sockaddr_in{}, 2);
-                commandsSent++;
+            // 根据当前模式启动相应操作
+            if (deviceManager.getCurrentMode() <=
+                2) { // 0=Conduction, 1=Resistance, 2=Clip
+                // 启动数据采集模式
+                deviceManager.startDataCollection();
+
+                // 数据采集的循环流程将由processDataCollection处理
+                Log::i("ControlHandler",
+                       "Started data collection in mode %d, cycle will be "
+                       "managed by processDataCollection",
+                       deviceManager.getCurrentMode());
+            } else {
+                Log::w("ControlHandler", "Unsupported mode: %d",
+                       static_cast<int>(deviceManager.getCurrentMode()));
             }
-        } break;
+            break;
 
-        case 2: // Reset system
-        {
-            Log::i("ControlHandler", "Resetting system");
-            // Send reset to all connected slaves
-            for (uint32_t slaveId : connectedSlaves) {
-                auto resetCmd = std::make_unique<Master2Slave::RstMessage>();
-                resetCmd->lockStatus = 0; // Unlock
-                resetCmd->clipLed = 0;    // Turn off LEDs
+        case 2: // 重置
+            Log::i("ControlHandler", "Resetting all devices");
 
-                server->sendCommandToSlaveWithRetry(
-                    slaveId, std::move(resetCmd), sockaddr_in{}, 3);
-                commandsSent++;
+            // 发送重置命令给所有从机
+            for (uint32_t slaveId : deviceManager.getConnectedSlaves()) {
+                auto rstCmd = std::make_unique<Master2Slave::RstMessage>();
+                rstCmd->lockStatus = 0;
+                rstCmd->clipLed = 0;
+
+                server->sendCommandToSlaveWithRetry(slaveId, std::move(rstCmd),
+                                                    sockaddr_in{}, 3);
             }
-        } break;
+
+            // 重置所有采集状态
+            deviceManager.resetDataCollection();
+            break;
 
         default:
             Log::w("ControlHandler", "Unknown running status: %d",
-                   static_cast<int>(ctrlMsg->runningStatus));
+                   static_cast<int>(controlMsg->runningStatus));
             break;
         }
-
-        Log::i(
-            "ControlHandler",
-            "Control command executed - Status: %d, Commands sent to %d slaves",
-            static_cast<int>(ctrlMsg->runningStatus), commandsSent);
     }
 };
 
@@ -831,7 +1104,7 @@ void MasterServer::sendCommandToSlaveWithRetry(uint32_t slaveId,
     // Create a pending command for retry management
     PendingCommand pendingCmd(slaveId, std::move(command), clientAddr,
                               maxRetries);
-    pendingCmd.timestamp = getCurrentTimestamp();
+    pendingCmd.timestamp = getCurrentTimestampMs();
 
     // Send the command immediately
     sendCommandToSlave(slaveId,
@@ -847,7 +1120,7 @@ void MasterServer::sendCommandToSlaveWithRetry(uint32_t slaveId,
 }
 
 void MasterServer::processPendingCommands() {
-    uint32_t currentTime = getCurrentTimestamp();
+    uint32_t currentTime = getCurrentTimestampMs();
     const uint32_t RETRY_TIMEOUT = 5000; // 5 seconds timeout
 
     auto it = pendingCommands.begin();
@@ -887,7 +1160,7 @@ void MasterServer::addPingSession(uint32_t targetId, uint8_t pingMode,
                                   const sockaddr_in &clientAddr) {
     // Create a new ping session
     PingSession session(targetId, pingMode, totalCount, interval, clientAddr);
-    session.lastPingTime = getCurrentTimestamp();
+    session.lastPingTime = getCurrentTimestampMs();
 
     activePingSessions.push_back(std::move(session));
 
@@ -898,7 +1171,7 @@ void MasterServer::addPingSession(uint32_t targetId, uint8_t pingMode,
 }
 
 void MasterServer::processPingSessions() {
-    uint32_t currentTime = getCurrentTimestamp();
+    uint32_t currentTime = getCurrentTimestampMs();
 
     auto it = activePingSessions.begin();
     while (it != activePingSessions.end()) {
@@ -962,80 +1235,93 @@ void MasterServer::processBackend2MasterMessage(const Message &message,
 void MasterServer::processSlave2MasterMessage(uint32_t slaveId,
                                               const Message &message,
                                               const sockaddr_in &clientAddr) {
-    Log::i("Master",
-           "Processing Slave2Master message from slave 0x%08X, ID: 0x%02X",
-           slaveId, static_cast<int>(message.getMessageId()));
+    Log::i("Master", "Processing Slave2Master message from slave 0x%08X",
+           slaveId);
 
     switch (message.getMessageId()) {
     case static_cast<uint8_t>(Slave2MasterMessageId::CONDUCTION_CFG_RSP_MSG): {
-        const auto *configRspMsg =
+        const auto *rspMsg =
             dynamic_cast<const Slave2Master::ConductionConfigResponseMessage *>(
                 &message);
-        if (configRspMsg) {
-            Log::i("Master",
-                   "Received conduction config response - Status: %d, Time "
-                   "slot: %d",
-                   static_cast<int>(configRspMsg->status),
-                   static_cast<int>(configRspMsg->timeSlot));
-            // TODO: Forward response to backend
-        }
-        break;
-    }
-    case static_cast<uint8_t>(Slave2MasterMessageId::RESISTANCE_CFG_RSP_MSG): {
-        const auto *configRspMsg =
-            dynamic_cast<const Slave2Master::ResistanceConfigResponseMessage *>(
-                &message);
-        if (configRspMsg) {
-            Log::i("Master",
-                   "Received resistance config response - Status: %d, Time "
-                   "slot: %d",
-                   static_cast<int>(configRspMsg->status),
-                   static_cast<int>(configRspMsg->timeSlot));
-            // TODO: Forward response to backend
-        }
-        break;
-    }
-    case static_cast<uint8_t>(Slave2MasterMessageId::CLIP_CFG_RSP_MSG): {
-        const auto *configRspMsg =
-            dynamic_cast<const Slave2Master::ClipConfigResponseMessage *>(
-                &message);
-        if (configRspMsg) {
-            Log::i("Master", "Received clip config response - Status: %d",
-                   static_cast<int>(configRspMsg->status));
-            // TODO: Forward response to backend
-        }
-        break;
-    }
-    case static_cast<uint8_t>(Slave2MasterMessageId::RST_RSP_MSG): {
-        const auto *resetRspMsg =
-            dynamic_cast<const Slave2Master::RstResponseMessage *>(&message);
-        if (resetRspMsg) {
-            Log::i("Master", "Received reset response - Status: %d",
-                   static_cast<int>(resetRspMsg->status));
-            // TODO: Forward response to backend
-        }
-        break;
-    }
-    case static_cast<uint8_t>(Slave2MasterMessageId::PING_RSP_MSG): {
-        const auto *pingRspMsg =
-            dynamic_cast<const Slave2Master::PingRspMessage *>(&message);
-        if (pingRspMsg) {
-            Log::i("Master", "Received ping response - Sequence: %d",
-                   static_cast<int>(pingRspMsg->sequenceNumber));
+        if (rspMsg) {
+            Log::i("Master", "Received conduction config response - Status: %d",
+                   static_cast<int>(rspMsg->status));
 
-            // Update ping session success count
-            for (auto &session : activePingSessions) {
-                if (session.targetId == slaveId) {
-                    session.successCount++;
-                    Log::i("Master",
-                           "Updated ping session for 0x%08X: %d/%d successful",
-                           slaveId, session.successCount, session.totalCount);
-                    break;
-                }
+            // 配置成功，加入连接状态
+            if (rspMsg->status == 0) {
+                deviceManager.addSlave(slaveId);
             }
         }
         break;
     }
+
+    case static_cast<uint8_t>(Slave2MasterMessageId::RESISTANCE_CFG_RSP_MSG): {
+        const auto *rspMsg =
+            dynamic_cast<const Slave2Master::ResistanceConfigResponseMessage *>(
+                &message);
+        if (rspMsg) {
+            Log::i("Master", "Received resistance config response - Status: %d",
+                   static_cast<int>(rspMsg->status));
+
+            // 配置成功，加入连接状态
+            if (rspMsg->status == 0) {
+                deviceManager.addSlave(slaveId);
+            }
+        }
+        break;
+    }
+
+    case static_cast<uint8_t>(Slave2MasterMessageId::CLIP_CFG_RSP_MSG): {
+        const auto *rspMsg =
+            dynamic_cast<const Slave2Master::ClipConfigResponseMessage *>(
+                &message);
+        if (rspMsg) {
+            Log::i("Master", "Received clip config response - Status: %d",
+                   static_cast<int>(rspMsg->status));
+
+            // 配置成功，加入连接状态
+            if (rspMsg->status == 0) {
+                deviceManager.addSlave(slaveId);
+            }
+        }
+        break;
+    }
+
+    case static_cast<uint8_t>(Slave2MasterMessageId::PING_RSP_MSG): {
+        const auto *pingRsp =
+            dynamic_cast<const Slave2Master::PingRspMessage *>(&message);
+        if (pingRsp) {
+            uint32_t currentTime = getCurrentTimestampMs();
+            uint32_t roundTripTime = currentTime - pingRsp->timestamp;
+
+            Log::i("Master",
+                   "Received ping response - Sequence: %d, RTT: %d ms",
+                   static_cast<int>(pingRsp->sequenceNumber), roundTripTime);
+
+            // Mark ping as successful in active ping sessions
+            for (auto &session : activePingSessions) {
+                if (session.targetId == slaveId) {
+                    session.successCount++;
+                    break;
+                }
+            }
+
+            // Add or update slave in connected devices
+            deviceManager.addSlave(slaveId);
+        }
+        break;
+    }
+
+    case static_cast<uint8_t>(Slave2MasterMessageId::RST_RSP_MSG): {
+        const auto *rstRsp =
+            dynamic_cast<const Slave2Master::RstResponseMessage *>(&message);
+        if (rstRsp) {
+            Log::i("Master", "Received reset response - Status: %d",
+                   static_cast<int>(rstRsp->status));
+        }
+        break;
+    }
+
     case static_cast<uint8_t>(Slave2MasterMessageId::ANNOUNCE_MSG): {
         const auto *announceMsg =
             dynamic_cast<const Slave2Master::AnnounceMessage *>(&message);
@@ -1050,6 +1336,7 @@ void MasterServer::processSlave2MasterMessage(uint32_t slaveId,
         }
         break;
     }
+
     case static_cast<uint8_t>(Slave2MasterMessageId::SHORT_ID_CONFIRM_MSG): {
         const auto *confirmMsg =
             dynamic_cast<const Slave2Master::ShortIdConfirmMessage *>(&message);
@@ -1062,6 +1349,96 @@ void MasterServer::processSlave2MasterMessage(uint32_t slaveId,
         }
         break;
     }
+
+    // 处理从机数据类型消息 - 这些是 Slave2Backend 消息，需要转发给后端
+    case static_cast<uint8_t>(Slave2BackendMessageId::CONDUCTION_DATA_MSG): {
+        const auto *dataMsg =
+            dynamic_cast<const Slave2Backend::ConductionDataMessage *>(
+                &message);
+        if (dataMsg) {
+            Log::i("Master",
+                   "Received conduction data from slave 0x%08X - %zu bytes",
+                   slaveId, dataMsg->conductionData.size());
+
+            // 标记从机的数据已接收
+            deviceManager.markDataReceived(slaveId);
+
+            // 将数据转发给后端
+            DeviceStatus status = {};
+            std::vector<std::vector<uint8_t>> packets =
+                processor.packSlave2BackendMessage(slaveId, status, *dataMsg);
+
+            for (const auto &packet : packets) {
+                sendto(sock, reinterpret_cast<const char *>(packet.data()),
+                       static_cast<int>(packet.size()), 0,
+                       (sockaddr *)&backendAddr, sizeof(backendAddr));
+
+                Log::i("Master",
+                       "Forwarded conduction data to backend - %zu bytes",
+                       packet.size());
+            }
+        }
+        break;
+    }
+
+    case static_cast<uint8_t>(Slave2BackendMessageId::RESISTANCE_DATA_MSG): {
+        const auto *dataMsg =
+            dynamic_cast<const Slave2Backend::ResistanceDataMessage *>(
+                &message);
+        if (dataMsg) {
+            Log::i("Master",
+                   "Received resistance data from slave 0x%08X - %zu bytes",
+                   slaveId, dataMsg->resistanceData.size());
+
+            // 标记从机的数据已接收
+            deviceManager.markDataReceived(slaveId);
+
+            // 将数据转发给后端
+            DeviceStatus status = {};
+            std::vector<std::vector<uint8_t>> packets =
+                processor.packSlave2BackendMessage(slaveId, status, *dataMsg);
+
+            for (const auto &packet : packets) {
+                sendto(sock, reinterpret_cast<const char *>(packet.data()),
+                       static_cast<int>(packet.size()), 0,
+                       (sockaddr *)&backendAddr, sizeof(backendAddr));
+
+                Log::i("Master",
+                       "Forwarded resistance data to backend - %zu bytes",
+                       packet.size());
+            }
+        }
+        break;
+    }
+
+    case static_cast<uint8_t>(Slave2BackendMessageId::CLIP_DATA_MSG): {
+        const auto *dataMsg =
+            dynamic_cast<const Slave2Backend::ClipDataMessage *>(&message);
+        if (dataMsg) {
+            Log::i("Master",
+                   "Received clip data from slave 0x%08X - value: 0x%02X",
+                   slaveId, dataMsg->clipData);
+
+            // 标记从机的数据已接收
+            deviceManager.markDataReceived(slaveId);
+
+            // 将数据转发给后端
+            DeviceStatus status = {};
+            std::vector<std::vector<uint8_t>> packets =
+                processor.packSlave2BackendMessage(slaveId, status, *dataMsg);
+
+            for (const auto &packet : packets) {
+                sendto(sock, reinterpret_cast<const char *>(packet.data()),
+                       static_cast<int>(packet.size()), 0,
+                       (sockaddr *)&backendAddr, sizeof(backendAddr));
+
+                Log::i("Master", "Forwarded clip data to backend - %zu bytes",
+                       packet.size());
+            }
+        }
+        break;
+    }
+
     default:
         Log::w("Master", "Unknown Slave2Master message type: 0x%02X",
                static_cast<int>(message.getMessageId()));
@@ -1113,9 +1490,10 @@ void MasterServer::run() {
     processor.setMTU(100);
 
     while (true) {
-        // Process pending commands and ping sessions
+        // Process pending commands, ping sessions, and data collection
         processPendingCommands();
         processPingSessions();
+        processDataCollection();
 
         int bytesReceived = recvfrom(sock, buffer, sizeof(buffer), 0,
                                      (sockaddr *)&clientAddr, &clientAddrLen);
@@ -1158,6 +1536,111 @@ void MasterServer::run() {
                 }
             }
         }
+    }
+}
+
+// 数据采集管理
+void MasterServer::processDataCollection() {
+    DeviceManager &dm = getDeviceManager();
+
+    // 如果没有活跃的数据采集，则不处理
+    if (!dm.isDataCollectionActive()) {
+        return;
+    }
+
+    uint32_t currentTime = getCurrentTimestampMs();
+
+    // 检查当前采集周期状态并根据状态执行相应操作
+    switch (dm.getCycleState()) {
+    case CollectionCycleState::IDLE:
+        // 处于空闲状态，检查是否应该开始新的采集周期
+        if (dm.shouldStartNewCycle(currentTime)) {
+            dm.startNewCycle(currentTime);
+            Log::i("MasterServer", "Started new data collection cycle");
+        }
+        break;
+
+    case CollectionCycleState::COLLECTING:
+        // 处于采集状态
+        if (!dm.isSyncSent()) {
+            // 发送Sync消息给所有从机
+            for (uint32_t slaveId : dm.getConnectedSlaves()) {
+                if (dm.hasSlaveConfig(slaveId)) {
+                    auto syncCmd =
+                        std::make_unique<Master2Slave::SyncMessage>();
+
+                    // 根据当前模式设置同步消息的模式
+                    syncCmd->mode = dm.getCurrentMode();
+                    syncCmd->timestamp = currentTime;
+
+                    // 发送同步消息
+                    sendCommandToSlave(slaveId, std::move(syncCmd),
+                                       slaveBroadcastAddr);
+
+                    Log::i("MasterServer",
+                           "Sent Sync message to slave 0x%08X with mode %d",
+                           slaveId, dm.getCurrentMode());
+                }
+            }
+
+            // 标记同步消息已发送
+            dm.markSyncSent(currentTime);
+
+        } else if (dm.shouldEnterReadingPhase(currentTime)) {
+            // 所有从机都已完成采集，可以进入读取数据阶段
+            dm.enterReadingPhase();
+            Log::i(
+                "MasterServer",
+                "All slaves completed data collection, entering reading phase");
+        }
+        break;
+
+    case CollectionCycleState::READING_DATA:
+        // 处于读取数据阶段，向未请求数据的从机发送读取数据请求
+        for (uint32_t slaveId : dm.getSlavesForDataRequest()) {
+            // 根据当前模式创建相应的读取数据消息
+            std::unique_ptr<Message> readDataCmd;
+
+            switch (dm.getCurrentMode()) {
+            case 0: // Conduction模式
+                readDataCmd =
+                    std::make_unique<Master2Slave::ReadConductionDataMessage>();
+                break;
+
+            case 1: // Resistance模式
+                readDataCmd =
+                    std::make_unique<Master2Slave::ReadResistanceDataMessage>();
+                break;
+
+            case 2: // Clip模式
+                readDataCmd =
+                    std::make_unique<Master2Slave::ReadClipDataMessage>();
+                break;
+            }
+
+            if (readDataCmd) {
+                // 发送读取数据命令
+                sendCommandToSlaveWithRetry(slaveId, std::move(readDataCmd),
+                                            slaveBroadcastAddr, 3);
+
+                // 标记数据已请求
+                dm.markDataRequested(slaveId);
+
+                Log::i("MasterServer",
+                       "Sent Read Data command to slave 0x%08X for mode %d",
+                       slaveId, dm.getCurrentMode());
+            }
+        }
+        break;
+
+    case CollectionCycleState::COMPLETE:
+        // 采集周期已完成，检查是否应该开始新的采集周期
+        if (dm.shouldStartNewCycle(currentTime)) {
+            dm.startNewCycle(currentTime);
+            Log::i("MasterServer",
+                   "Started new data collection cycle after completion");
+        }
+        break;
     }
 }
 
