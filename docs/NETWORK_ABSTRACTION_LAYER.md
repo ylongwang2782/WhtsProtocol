@@ -8,9 +8,10 @@
 
 1. **跨平台兼容性**: 支持Windows、Linux和嵌入式平台
 2. **统一接口**: 提供一致的API，隐藏平台差异
-3. **高性能**: 最小化抽象层开销
+3. **高性能**: 最小化抽象层开销，支持ASIO异步I/O
 4. **易于移植**: 简化代码在不同平台间的移植工作
 5. **可扩展性**: 支持未来添加新的网络协议栈
+6. **多种实现**: 支持原生socket、ASIO和lwip等多种网络实现
 
 ## 架构设计
 
@@ -29,11 +30,11 @@
 │     IUdpSocket     │    IUdpSocketFactory           │
 │    (UDP套接字接口)   │   (套接字工厂接口)               │
 ├─────────────────────────────────────────────────────┤
-│  WindowsUdpSocket  │    LwipUdpSocket               │
-│   (Windows实现)     │    (嵌入式实现)                 │
+│ WindowsUdpSocket │ AsioUdpSocket │  LwipUdpSocket    │
+│  (原生Socket)     │   (ASIO)     │   (嵌入式)        │
 ├─────────────────────────────────────────────────────┤
-│   Windows Socket   │      lwip TCP/IP               │
-│      API          │        Stack                   │
+│ Windows Socket   │     ASIO     │   lwip TCP/IP     │
+│     API         │   Library    │     Stack         │
 └─────────────────────────────────────────────────────┘
 ```
 
@@ -140,31 +141,53 @@ networkManager->setEventCallback([](const NetworkEvent& event) {
 
 ## 平台特定实现
 
-### Windows实现 (WindowsUdpSocket)
-- 使用Windows Socket API
+### Windows/Linux原生实现 (WindowsUdpSocket)
+- 使用原生Socket API (Windows Socket/POSIX)
 - 支持IPv4 UDP通信
 - 非阻塞I/O模式
 - 广播支持
+- 跨平台兼容性
+
+### ASIO实现 (AsioUdpSocket)
+- 使用ASIO异步I/O库
+- 高性能异步网络通信
+- 真正的事件驱动架构
+- 支持高并发和大吞吐量
+- 优秀的可扩展性
+- 自动的线程池管理
 
 ### 嵌入式实现 (LwipUdpSocket)
 - 使用lwip协议栈
 - 事件驱动的异步I/O
 - 内存优化的数据处理
 - 支持lwip的所有网络特性
+- 适合资源受限的嵌入式环境
 
 ## 编译配置
 
 ### CMake选项
 ```cmake
+# 启用ASIO支持（高性能异步I/O）
+option(USE_ASIO "Enable ASIO support for high-performance async I/O" OFF)
+
 # 启用lwip支持（嵌入式平台）
 option(USE_LWIP "Enable lwip support for embedded platforms" OFF)
 
 # 未来可以添加的选项
-option(USE_ASIO "Use ASIO instead of raw sockets on Windows" OFF)
 option(ENABLE_IPV6 "Enable IPv6 support" OFF)
 ```
 
+### ASIO编译配置
+```cmake
+# 启用ASIO支持
+cmake -DUSE_ASIO=ON ..
+
+# 如果系统没有ASIO，可以使用header-only版本
+# 将ASIO头文件放在 third_party/asio/asio/include/ 目录下
+```
+
 ### 预处理器宏
+- `USE_ASIO`: 启用ASIO实现
 - `USE_LWIP`: 启用lwip实现
 - `_WIN32`: Windows平台检测
 - `__linux__`: Linux平台检测
@@ -230,11 +253,20 @@ networkManager->sendTo(socketId, data, targetAddr);
 
 ## 示例项目
 
+### 基础示例
 参考`src/HAL/Network/example_usage.cpp`文件，该文件展示了：
 - 如何初始化网络管理器
 - 如何创建和配置套接字
 - 如何发送和接收数据
 - 如何处理网络事件
+
+### ASIO高性能示例
+参考`src/HAL/Network/asio_example.cpp`文件，该文件展示了：
+- 如何使用ASIO实现高性能网络通信
+- 高频消息发送和接收
+- 突发流量处理
+- 性能测试和基准测试
+- 不同实现之间的性能比较
 
 ## 故障排除
 
@@ -249,13 +281,22 @@ networkManager->sendTo(socketId, data, targetAddr);
 - 使用网络抓包工具验证数据传输
 - 检查平台特定的网络配置
 
+## 性能比较
+
+| 实现类型 | 适用场景 | 性能特点 | 优势 | 劣势 |
+|---------|---------|---------|------|------|
+| 原生Socket | 一般应用 | 中等性能 | 简单、兼容性好 | 同步I/O限制 |
+| ASIO | 高性能应用 | 高性能 | 异步I/O、高并发 | 依赖额外库 |
+| lwip | 嵌入式 | 低资源消耗 | 内存优化 | 功能相对有限 |
+
 ## 未来规划
 
-1. **ASIO集成**: 在Windows平台支持ASIO异步I/O
+1. ✅ **ASIO集成**: 已完成ASIO异步I/O支持
 2. **IPv6支持**: 扩展协议支持
 3. **SSL/TLS**: 添加安全传输层
 4. **性能优化**: 零拷贝数据传输
 5. **更多平台**: 支持macOS、FreeBSD等
+6. **TCP支持**: 扩展到TCP协议
 
 ## 总结
 

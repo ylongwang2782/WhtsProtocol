@@ -11,9 +11,11 @@ namespace Network {
  * 平台类型枚举
  */
 enum class PlatformType {
-    WINDOWS, // Windows平台
-    LINUX,   // Linux平台
-    EMBEDDED // 嵌入式平台（使用lwip）
+    WINDOWS,      // Windows平台（原生socket）
+    WINDOWS_ASIO, // Windows平台（ASIO）
+    LINUX,        // Linux平台（原生socket）
+    LINUX_ASIO,   // Linux平台（ASIO）
+    EMBEDDED      // 嵌入式平台（使用lwip）
 };
 
 /**

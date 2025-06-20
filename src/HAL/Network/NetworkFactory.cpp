@@ -1,8 +1,8 @@
 #include "NetworkFactory.h"
+#include "AsioUdpSocket.h"
 #include "LwipUdpSocket.h"
 #include "WindowsUdpSocket.h"
 #include <iostream>
-
 
 namespace HAL {
 namespace Network {
@@ -10,6 +10,14 @@ namespace Network {
 PlatformType NetworkFactory::getCurrentPlatform() {
 #ifdef USE_LWIP
     return PlatformType::EMBEDDED;
+#elif defined(USE_ASIO)
+#if defined(_WIN32)
+    return PlatformType::WINDOWS_ASIO;
+#elif defined(__linux__)
+    return PlatformType::LINUX_ASIO;
+#else
+    return PlatformType::WINDOWS_ASIO; // 默认ASIO实现
+#endif
 #elif defined(_WIN32)
     return PlatformType::WINDOWS;
 #elif defined(__linux__)
@@ -26,6 +34,16 @@ NetworkFactory::createUdpSocketFactory(PlatformType platform) {
     case PlatformType::WINDOWS:
     case PlatformType::LINUX:
         return std::make_unique<WindowsUdpSocketFactory>();
+
+    case PlatformType::WINDOWS_ASIO:
+    case PlatformType::LINUX_ASIO:
+#ifdef USE_ASIO
+        return std::make_unique<AsioUdpSocketFactory>();
+#else
+        std::cerr << "[ERROR] NetworkFactory: ASIO support not compiled in"
+                  << std::endl;
+        return nullptr;
+#endif
 
     case PlatformType::EMBEDDED:
 #ifdef USE_LWIP
@@ -71,9 +89,13 @@ NetworkFactory::createNetworkManager(PlatformType platform) {
 std::string NetworkFactory::getPlatformName(PlatformType platform) {
     switch (platform) {
     case PlatformType::WINDOWS:
-        return "Windows";
+        return "Windows (Native Socket)";
+    case PlatformType::WINDOWS_ASIO:
+        return "Windows (ASIO)";
     case PlatformType::LINUX:
-        return "Linux";
+        return "Linux (Native Socket)";
+    case PlatformType::LINUX_ASIO:
+        return "Linux (ASIO)";
     case PlatformType::EMBEDDED:
         return "Embedded (lwip)";
     default:
@@ -86,6 +108,14 @@ bool NetworkFactory::isPlatformSupported(PlatformType platform) {
     case PlatformType::WINDOWS:
     case PlatformType::LINUX:
         return true;
+
+    case PlatformType::WINDOWS_ASIO:
+    case PlatformType::LINUX_ASIO:
+#ifdef USE_ASIO
+        return true;
+#else
+        return false;
+#endif
 
     case PlatformType::EMBEDDED:
 #ifdef USE_LWIP

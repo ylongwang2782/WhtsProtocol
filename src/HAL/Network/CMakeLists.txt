@@ -12,6 +12,8 @@ set(NETWORK_SOURCES
     WindowsUdpSocket.cpp
     LwipUdpSocket.h
     LwipUdpSocket.cpp
+    AsioUdpSocket.h
+    AsioUdpSocket.cpp
 )
 
 # 创建网络HAL库
@@ -30,6 +32,35 @@ if(WIN32)
     target_link_libraries(NetworkHAL PRIVATE ws2_32)
 endif()
 
+# ASIO支持（可选）
+option(USE_ASIO "Enable ASIO support for high-performance async I/O" OFF)
+if(USE_ASIO)
+    target_compile_definitions(NetworkHAL PUBLIC USE_ASIO)
+    
+    # 查找ASIO库
+    find_package(asio QUIET)
+    if(asio_FOUND)
+        target_link_libraries(NetworkHAL PRIVATE asio::asio)
+        message(STATUS "Network HAL: Using system ASIO library")
+    else()
+        # 如果没有找到系统ASIO，可以使用header-only版本
+        # 假设ASIO头文件在third_party/asio/include目录下
+        if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../../../third_party/asio/asio/include")
+            target_include_directories(NetworkHAL PRIVATE 
+                "${CMAKE_CURRENT_SOURCE_DIR}/../../../third_party/asio/asio/include")
+            message(STATUS "Network HAL: Using bundled ASIO library")
+        else()
+            message(WARNING "Network HAL: ASIO requested but not found. Please install ASIO or provide headers.")
+        endif()
+    endif()
+    
+    # ASIO需要线程支持
+    find_package(Threads REQUIRED)
+    target_link_libraries(NetworkHAL PRIVATE Threads::Threads)
+    
+    message(STATUS "Network HAL: ASIO support enabled")
+endif()
+
 # lwip支持（可选）
 option(USE_LWIP "Enable lwip support for embedded platforms" OFF)
 if(USE_LWIP)
@@ -38,7 +69,9 @@ if(USE_LWIP)
     # find_package(lwip REQUIRED)
     # target_link_libraries(NetworkHAL PRIVATE lwip)
     message(STATUS "Network HAL: lwip support enabled")
-else()
+endif()
+
+if(NOT USE_ASIO AND NOT USE_LWIP)
     message(STATUS "Network HAL: Using native socket implementation")
 endif()
 
