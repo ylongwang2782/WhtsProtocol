@@ -4,24 +4,47 @@
 add_library(Adapter STATIC
     ContinuityCollector.cpp
     ContinuityCollector.h
-    SpdlogAdapter.cpp
-    SpdlogAdapter.h
+    LoggerFactory.cpp
+    LoggerFactory.h
 )
 
 # 设置目标属性
 target_include_directories(Adapter PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/../interface
+    ${CMAKE_CURRENT_SOURCE_DIR}/../platform/windows
+    ${CMAKE_CURRENT_SOURCE_DIR}/../platform/embedded
 )
 
 # 链接依赖库
 find_package(Threads REQUIRED)
+
+# 根据平台链接不同的实现
+if(WIN32)
+    target_sources(Adapter PRIVATE
+        ../platform/windows/SpdlogAdapter.cpp
+        ../platform/windows/SpdlogAdapter.h
+    )
+    target_link_libraries(Adapter PRIVATE spdlog)
+elseif(EMBEDDED_PLATFORM)
+    target_sources(Adapter PRIVATE
+        ../platform/embedded/EmbeddedLogger.cpp
+        ../platform/embedded/EmbeddedLogger.h
+    )
+else()
+    # 默认使用spdlog
+    target_sources(Adapter PRIVATE
+        ../platform/windows/SpdlogAdapter.cpp
+        ../platform/windows/SpdlogAdapter.h
+    )
+    target_link_libraries(Adapter PRIVATE spdlog)
+endif()
 
 target_link_libraries(Adapter 
     PUBLIC 
         Gpio  # 直接链接Gpio库而不是HAL接口库
     PRIVATE
         Threads::Threads
-        spdlog  # spdlog库 (使用子模块)
 )
 
 # 设置编译选项

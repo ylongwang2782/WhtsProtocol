@@ -3,19 +3,12 @@
 # 添加GPIO子模块
 add_subdirectory(Gpio)
 
-# EmbeddedLogger library - 嵌入式日志实现
-add_library(HALEmbeddedLogger STATIC
-    EmbeddedLogger.cpp
-    EmbeddedLogger.h
-)
-
-# HAL library - 硬件抽象层库（现在主要作为GPIO的别名）
+# HAL library - 硬件抽象层库（主要作为GPIO的别名）
 add_library(HAL INTERFACE)
 
-# 链接GPIO模块和EmbeddedLogger
+# 链接GPIO模块
 target_link_libraries(HAL INTERFACE 
     Gpio
-    HALEmbeddedLogger
 )
 
 # 设置包含目录 - 让其他模块可以使用 #include "Gpio.h"

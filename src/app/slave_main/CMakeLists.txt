@@ -28,7 +28,7 @@ target_include_directories(${SLAVE_TARGET}
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/../../HAL/Gpio
     ${CMAKE_CURRENT_SOURCE_DIR}/../../Adapter
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../logger
+    ${CMAKE_CURRENT_SOURCE_DIR}/..
     ${CMAKE_CURRENT_SOURCE_DIR}/../../protocol
     ${CMAKE_CURRENT_SOURCE_DIR}/../../protocol/messages
     ${CMAKE_CURRENT_SOURCE_DIR}/../../protocol/utils
@@ -37,7 +37,7 @@ target_include_directories(${SLAVE_TARGET}
 # Link libraries
 target_link_libraries(${SLAVE_TARGET} 
     WhtsProtocol
-    # Logger  # Temporarily disabled due to naming conflict
+    AppLogger
     HAL
     Adapter
 )

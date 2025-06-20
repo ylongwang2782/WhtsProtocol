@@ -2,19 +2,19 @@
 
 // 根据平台选择不同的实现
 #ifdef _WIN32
-#include "../Adapter/SpdlogAdapter.h"
+#include "../platform/windows/SpdlogAdapter.h"
 #define USE_SPDLOG 1
 #elif defined(__linux__) || defined(__APPLE__)
 // 在Linux/Mac平台可以选择使用spdlog或其他实现
-#include "../Adapter/SpdlogAdapter.h"
+#include "../platform/windows/SpdlogAdapter.h"
 #define USE_SPDLOG 1
 #elif defined(EMBEDDED_PLATFORM)
 // 嵌入式平台使用自定义实现
-#include "../HAL/EmbeddedLogger.h"
+#include "../platform/embedded/EmbeddedLogger.h"
 #define USE_EMBEDDED 1
 #else
 // 默认使用spdlog
-#include "../Adapter/SpdlogAdapter.h"
+#include "../platform/windows/SpdlogAdapter.h"
 #define USE_SPDLOG 1
 #endif
 

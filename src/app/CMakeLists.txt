@@ -1,6 +1,22 @@
 # Application executables
 cmake_minimum_required(VERSION 3.10)
 
+# Add Logger library for app
+add_library(AppLogger STATIC
+    Logger.cpp
+    Logger.h
+)
+
+target_include_directories(AppLogger PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/../interface
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Adapter
+)
+
+target_link_libraries(AppLogger PUBLIC
+    Adapter
+)
+
 # Add subdirectories
 add_subdirectory(master_main)
 add_subdirectory(slave_main)
@@ -19,7 +35,7 @@ foreach(target ${ALL_EXECUTABLES})
         PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/../HAL/Gpio
         ${CMAKE_CURRENT_SOURCE_DIR}/../Adapter
-        ${CMAKE_CURRENT_SOURCE_DIR}/../logger
+        ${CMAKE_CURRENT_SOURCE_DIR}
         ${CMAKE_CURRENT_SOURCE_DIR}/../protocol
         ${CMAKE_CURRENT_SOURCE_DIR}/../protocol/messages
         ${CMAKE_CURRENT_SOURCE_DIR}/../protocol/utils
@@ -28,7 +44,7 @@ foreach(target ${ALL_EXECUTABLES})
     # Link libraries
     target_link_libraries(${target} 
         WhtsProtocol
-        Logger
+        AppLogger
         HAL
         Adapter
     )

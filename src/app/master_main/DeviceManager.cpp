@@ -1,5 +1,5 @@
 #include "DeviceManager.h"
-#include "Logger.h"
+#include "../Logger.h"
 
 DeviceManager::DeviceManager()
     : currentMode(0), systemRunningStatus(0), dataCollectionActive(false),

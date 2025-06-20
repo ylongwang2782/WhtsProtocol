@@ -1,5 +1,5 @@
 #include "ProtocolProcessor.h"
-#include "../logger/Logger.h"
+#include "../app/Logger.h"
 #include "messages/Backend2Master.h"
 #include "messages/Master2Backend.h"
 #include "messages/Master2Slave.h"

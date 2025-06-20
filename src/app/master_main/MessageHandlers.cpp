@@ -1,5 +1,5 @@
 #include "MessageHandlers.h"
-#include "Logger.h"
+#include "../Logger.h"
 #include "MasterServer.h"
 
 // Slave Configuration Message Handler

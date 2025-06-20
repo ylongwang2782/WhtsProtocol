@@ -1,5 +1,5 @@
 #include "MasterServer.h"
-#include "Logger.h"
+#include "../Logger.h"
 #include "MessageHandlers.h"
 
 // Define this to suppress deprecated warnings for inet_addr

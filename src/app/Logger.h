@@ -1,14 +1,14 @@
 #pragma once
+#include "../Adapter/LoggerFactory.h"
 #include "../interface/ILogger.h"
-#include "LoggerFactory.h"
 #include <string>
 
-// 重新定义LogLevel以保持兼容性（如果需要的话）
+// Redefine LogLevel for compatibility
 using LogLevel = ::LogLevel;
 
 /**
- * @brief 日志管理器类
- * 使用工厂模式创建平台特定的日志实现
+ * @brief Logger manager class
+ * Uses factory pattern to create platform-specific logger implementations
  */
 class Logger {
   public:
@@ -21,14 +21,14 @@ class Logger {
     void log(LogLevel level, const std::string &tag,
              const std::string &message);
 
-    // 便利方法 - 字符串版本
+    // Convenience methods - string version
     void v(const std::string &tag, const std::string &message);
     void d(const std::string &tag, const std::string &message);
     void i(const std::string &tag, const std::string &message);
     void w(const std::string &tag, const std::string &message);
     void e(const std::string &tag, const std::string &message);
 
-    // 格式化版本
+    // Formatted version
     void v(const std::string &tag, const char *format, ...);
     void d(const std::string &tag, const char *format, ...);
     void i(const std::string &tag, const char *format, ...);
@@ -45,8 +45,9 @@ class Logger {
 };
 
 /**
- * @brief 静态日志接口类
- * 提供与原有Log类相同的静态接口，保持向后兼容性
+ * @brief Static logger interface class
+ * Provides the same static interface as the original Log class for backward
+ * compatibility
  */
 class Log {
   public:
@@ -56,7 +57,7 @@ class Log {
     static void w(const std::string &tag, const std::string &message);
     static void e(const std::string &tag, const std::string &message);
 
-    // 格式化版本
+    // Formatted version
     static void v(const std::string &tag, const char *format, ...);
     static void d(const std::string &tag, const char *format, ...);
     static void i(const std::string &tag, const char *format, ...);

@@ -13,7 +13,7 @@ target_include_directories(MasterCore
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/../../HAL/Gpio
     ${CMAKE_CURRENT_SOURCE_DIR}/../../Adapter
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../logger
+    ${CMAKE_CURRENT_SOURCE_DIR}/..
     ${CMAKE_CURRENT_SOURCE_DIR}/../../protocol
     ${CMAKE_CURRENT_SOURCE_DIR}/../../protocol/messages
     ${CMAKE_CURRENT_SOURCE_DIR}/../../protocol/utils
@@ -22,7 +22,7 @@ target_include_directories(MasterCore
 # Link libraries
 target_link_libraries(MasterCore 
     WhtsProtocol
-    Logger
+    AppLogger
     HAL
     Adapter
 )
@@ -48,6 +48,7 @@ target_link_libraries(Master MasterCore)
 target_include_directories(Master
     PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/..
 )
 
 # Set C++ standard for the executable

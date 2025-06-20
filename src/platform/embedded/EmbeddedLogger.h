@@ -1,5 +1,5 @@
 #pragma once
-#include "../interface/ILogger.h"
+#include "../../interface/ILogger.h"
 
 /**
  * @brief 嵌入式平台的简单日志实现

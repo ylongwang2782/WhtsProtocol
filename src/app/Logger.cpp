@@ -15,7 +15,7 @@ std::string formatString(const char *format, va_list args) {
 
     std::string buffer(size, '\0');
     std::vsnprintf(&buffer[0], size, format, args);
-    buffer.pop_back(); // 移除末尾的null字符
+    buffer.pop_back(); // Remove trailing null character
     return buffer;
 }
 } // namespace
@@ -95,7 +95,7 @@ void Logger::e(const std::string &tag, const char *format, ...) {
     va_end(args);
 }
 
-// Log 类的静态方法实现
+// Log class static method implementations
 void Log::v(const std::string &tag, const std::string &message) {
     Logger::getInstance().v(tag, message);
 }
