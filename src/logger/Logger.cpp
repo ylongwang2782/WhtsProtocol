@@ -1,119 +1,98 @@
 #include "Logger.h"
-#include <chrono>
-#include <ctime>
-#include <iomanip>
-#include <iostream>
-#include <sstream>
+#include <cstdarg>
+#include <cstdio>
+
+namespace {
+std::string formatString(const char *format, va_list args) {
+    va_list args_copy;
+    va_copy(args_copy, args);
+    int size = std::vsnprintf(nullptr, 0, format, args_copy) + 1;
+    va_end(args_copy);
+
+    if (size <= 0) {
+        return std::string(format);
+    }
+
+    std::string buffer(size, '\0');
+    std::vsnprintf(&buffer[0], size, format, args);
+    buffer.pop_back(); // 移除末尾的null字符
+    return buffer;
+}
+} // namespace
 
 Logger &Logger::getInstance() {
     static Logger instance;
     return instance;
 }
 
-Logger::~Logger() {
-    if (logFile.is_open()) {
-        logFile.close();
-    }
-}
+ILogger &Logger::getLoggerImpl() { return LoggerFactory::getInstance(); }
 
-void Logger::setLogLevel(LogLevel level) {
-    std::lock_guard<std::mutex> lock(logMutex);
-    currentLogLevel = level;
-}
+void Logger::setLogLevel(LogLevel level) { getLoggerImpl().setLogLevel(level); }
 
 void Logger::enableFileLogging(const std::string &filename) {
-    std::lock_guard<std::mutex> lock(logMutex);
-    if (logFile.is_open()) {
-        logFile.close();
-    }
-    logFile.open(filename, std::ios::app);
-    fileLoggingEnabled = logFile.is_open();
+    getLoggerImpl().enableFileLogging(filename);
 }
 
-void Logger::disableFileLogging() {
-    std::lock_guard<std::mutex> lock(logMutex);
-    if (logFile.is_open()) {
-        logFile.close();
-    }
-    fileLoggingEnabled = false;
-}
+void Logger::disableFileLogging() { getLoggerImpl().disableFileLogging(); }
 
 void Logger::log(LogLevel level, const std::string &tag,
                  const std::string &message) {
-    if (level < currentLogLevel) {
-        return;
-    }
-
-    std::lock_guard<std::mutex> lock(logMutex);
-
-    std::string timestamp = getCurrentTimestamp();
-    std::string levelStr = levelToString(level);
-
-    std::ostringstream oss;
-    oss << "[" << timestamp << "] [" << levelStr << "] [" << tag << "] "
-        << message;
-
-    std::string logMessage = oss.str();
-
-    // 输出到控制台
-    std::cout << logMessage << std::endl;
-
-    // 输出到文件（如果启用）
-    if (fileLoggingEnabled && logFile.is_open()) {
-        logFile << logMessage << std::endl;
-        logFile.flush();
-    }
+    getLoggerImpl().log(level, tag, message);
 }
 
 void Logger::v(const std::string &tag, const std::string &message) {
-    log(LogLevel::VERBOSE, tag, message);
+    getLoggerImpl().v(tag, message);
 }
 
 void Logger::d(const std::string &tag, const std::string &message) {
-    log(LogLevel::DEBUG, tag, message);
+    getLoggerImpl().d(tag, message);
 }
 
 void Logger::i(const std::string &tag, const std::string &message) {
-    log(LogLevel::INFO, tag, message);
+    getLoggerImpl().i(tag, message);
 }
 
 void Logger::w(const std::string &tag, const std::string &message) {
-    log(LogLevel::WARN, tag, message);
+    getLoggerImpl().w(tag, message);
 }
 
 void Logger::e(const std::string &tag, const std::string &message) {
-    log(LogLevel::ERR, tag, message);
+    getLoggerImpl().e(tag, message);
 }
 
-std::string Logger::getCurrentTimestamp() {
-    auto now = std::chrono::system_clock::now();
-    auto time_t = std::chrono::system_clock::to_time_t(now);
-    auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-                  now.time_since_epoch()) %
-              1000;
-
-    std::ostringstream oss;
-    oss << std::put_time(std::localtime(&time_t), "%Y-%m-%d %H:%M:%S");
-    oss << "." << std::setfill('0') << std::setw(3) << ms.count();
-
-    return oss.str();
+void Logger::v(const std::string &tag, const char *format, ...) {
+    va_list args;
+    va_start(args, format);
+    getLoggerImpl().v(tag, formatString(format, args));
+    va_end(args);
 }
 
-std::string Logger::levelToString(LogLevel level) {
-    switch (level) {
-    case LogLevel::VERBOSE:
-        return "VERBOSE";
-    case LogLevel::DEBUG:
-        return "DEBUG";
-    case LogLevel::INFO:
-        return "INFO";
-    case LogLevel::WARN:
-        return "WARN";
-    case LogLevel::ERR:
-        return "ERR";
-    default:
-        return "UNKNOWN";
-    }
+void Logger::d(const std::string &tag, const char *format, ...) {
+    va_list args;
+    va_start(args, format);
+    getLoggerImpl().d(tag, formatString(format, args));
+    va_end(args);
+}
+
+void Logger::i(const std::string &tag, const char *format, ...) {
+    va_list args;
+    va_start(args, format);
+    getLoggerImpl().i(tag, formatString(format, args));
+    va_end(args);
+}
+
+void Logger::w(const std::string &tag, const char *format, ...) {
+    va_list args;
+    va_start(args, format);
+    getLoggerImpl().w(tag, formatString(format, args));
+    va_end(args);
+}
+
+void Logger::e(const std::string &tag, const char *format, ...) {
+    va_list args;
+    va_start(args, format);
+    getLoggerImpl().e(tag, formatString(format, args));
+    va_end(args);
 }
 
 // Log 类的静态方法实现
@@ -135,6 +114,41 @@ void Log::w(const std::string &tag, const std::string &message) {
 
 void Log::e(const std::string &tag, const std::string &message) {
     Logger::getInstance().e(tag, message);
+}
+
+void Log::v(const std::string &tag, const char *format, ...) {
+    va_list args;
+    va_start(args, format);
+    Logger::getInstance().v(tag, formatString(format, args));
+    va_end(args);
+}
+
+void Log::d(const std::string &tag, const char *format, ...) {
+    va_list args;
+    va_start(args, format);
+    Logger::getInstance().d(tag, formatString(format, args));
+    va_end(args);
+}
+
+void Log::i(const std::string &tag, const char *format, ...) {
+    va_list args;
+    va_start(args, format);
+    Logger::getInstance().i(tag, formatString(format, args));
+    va_end(args);
+}
+
+void Log::w(const std::string &tag, const char *format, ...) {
+    va_list args;
+    va_start(args, format);
+    Logger::getInstance().w(tag, formatString(format, args));
+    va_end(args);
+}
+
+void Log::e(const std::string &tag, const char *format, ...) {
+    va_list args;
+    va_start(args, format);
+    Logger::getInstance().e(tag, formatString(format, args));
+    va_end(args);
 }
 
 void Log::setLogLevel(LogLevel level) {

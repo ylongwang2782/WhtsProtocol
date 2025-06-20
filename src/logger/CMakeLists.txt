@@ -1,15 +1,26 @@
 # Logger Module CMakeLists.txt
 
-# Create Logger library
+# Create main Logger library that provides the unified interface
 add_library(Logger STATIC 
     Logger.cpp
     Logger.h
+    LoggerFactory.cpp
+    LoggerFactory.h
 )
 
 # Set include directories
 target_include_directories(Logger 
     PUBLIC 
     ${CMAKE_CURRENT_SOURCE_DIR}
+)
+
+# Link with the adapters and spdlog
+target_link_libraries(Logger 
+    PUBLIC 
+    LoggerInterface
+    Adapter  # Contains SpdlogAdapter
+    HALEmbeddedLogger  # From HAL
+    spdlog
 )
 
 # Set target properties

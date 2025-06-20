@@ -4,6 +4,8 @@
 add_library(Adapter STATIC
     ContinuityCollector.cpp
     ContinuityCollector.h
+    SpdlogAdapter.cpp
+    SpdlogAdapter.h
 )
 
 # 设置目标属性
@@ -13,11 +15,13 @@ target_include_directories(Adapter PUBLIC
 
 # 链接依赖库
 find_package(Threads REQUIRED)
+
 target_link_libraries(Adapter 
     PUBLIC 
         Gpio  # 直接链接Gpio库而不是HAL接口库
     PRIVATE
         Threads::Threads
+        spdlog  # spdlog库 (使用子模块)
 )
 
 # 设置编译选项
