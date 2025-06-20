@@ -1,4 +1,5 @@
 #include "NetworkManager.h"
+#include "../Logger.h"
 #include <iostream>
 
 #ifdef _WIN32
@@ -23,15 +24,14 @@ bool NetworkManager::initialize() {
 #ifdef _WIN32
     WSADATA wsaData;
     if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0) {
-        std::cout << "[ERROR] NetworkManager: WSAStartup failed" << std::endl;
+        Log::e("NetworkManager", "WSAStartup failed");
         return false;
     }
 #endif
 
     sock = socket(AF_INET, SOCK_DGRAM, 0);
     if (sock == INVALID_SOCKET) {
-        std::cout << "[ERROR] NetworkManager: Socket creation failed"
-                  << std::endl;
+        Log::e("NetworkManager", "Socket creation failed");
         return false;
     }
 
@@ -40,8 +40,7 @@ bool NetworkManager::initialize() {
     int broadcast = 1;
     if (setsockopt(sock, SOL_SOCKET, SO_BROADCAST, (char *)&broadcast,
                    sizeof(broadcast)) == SOCKET_ERROR) {
-        std::cout << "[WARN] NetworkManager: Failed to enable broadcast option"
-                  << std::endl;
+        Log::w("NetworkManager", "Failed to enable broadcast option");
     }
 
     // Configure server address (Slave listens on port 8081 for broadcasts)
@@ -57,7 +56,7 @@ bool NetworkManager::initialize() {
 
     if (bind(sock, (sockaddr *)&serverAddr, sizeof(serverAddr)) ==
         SOCKET_ERROR) {
-        std::cout << "[ERROR] NetworkManager: Bind failed" << std::endl;
+        Log::e("NetworkManager", "Bind failed");
         closesocket(sock);
         sock = INVALID_SOCKET;
         return false;
@@ -65,13 +64,11 @@ bool NetworkManager::initialize() {
 
     processor.setMTU(100);
 
-    std::cout << "[INFO] NetworkManager: Network initialized - Device ID: 0x"
-              << std::hex << deviceId << ", listening on port " << std::dec
-              << port << std::endl;
-    std::cout << "[INFO] NetworkManager: Master communication port: 8080"
-              << std::endl;
-    std::cout << "[INFO] NetworkManager: Wireless broadcast reception enabled"
-              << std::endl;
+    Log::i("NetworkManager",
+           "Network initialized - Device ID: 0x%08X, listening on port %d",
+           deviceId, port);
+    Log::i("NetworkManager", "Master communication port: 8080");
+    Log::i("NetworkManager", "Wireless broadcast reception enabled");
 
     return true;
 }

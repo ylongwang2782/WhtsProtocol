@@ -1,4 +1,5 @@
 #include "SlaveDevice.h"
+#include "../Logger.h"
 #include <chrono>
 #include <iostream>
 #include <thread>
@@ -24,25 +25,22 @@ SlaveDevice::SlaveDevice(uint16_t listenPort, uint32_t id)
 
 bool SlaveDevice::initialize() {
     if (!networkManager->initialize()) {
-        std::cout << "[ERROR] SlaveDevice: Failed to initialize network manager"
-                  << std::endl;
+        Log::e("SlaveDevice", "Failed to initialize network manager");
         return false;
     }
 
     // Set non-blocking mode for the socket
     networkManager->setNonBlocking();
 
-    std::cout << "[INFO] SlaveDevice: Slave device (ID: 0x" << std::hex
-              << deviceId << ") initialized successfully" << std::dec
-              << std::endl;
+    Log::i("SlaveDevice", "Slave device (ID: 0x%08X) initialized successfully",
+           deviceId);
     return true;
 }
 
 void SlaveDevice::processFrame(Frame &frame, const sockaddr_in &senderAddr) {
-    std::cout << "[INFO] SlaveDevice: Processing frame - PacketId: 0x"
-              << std::hex << static_cast<int>(frame.packetId)
-              << ", payload size: " << std::dec << frame.payload.size()
-              << std::endl;
+    Log::i("SlaveDevice",
+           "Processing frame - PacketId: 0x%02X, payload size: %zu",
+           static_cast<int>(frame.packetId), frame.payload.size());
 
     if (frame.packetId == static_cast<uint8_t>(PacketId::MASTER_TO_SLAVE)) {
         uint32_t targetSlaveId;
@@ -53,20 +51,18 @@ void SlaveDevice::processFrame(Frame &frame, const sockaddr_in &senderAddr) {
                                               masterMessage)) {
             // Check if this message is for us (or broadcast)
             if (targetSlaveId == deviceId || targetSlaveId == BROADCAST_ID) {
-                std::cout << "[INFO] SlaveDevice: Processing Master2Slave "
-                             "message for device 0x"
-                          << std::hex << targetSlaveId << ", Message ID: 0x"
-                          << static_cast<int>(masterMessage->getMessageId())
-                          << std::dec << std::endl;
+                Log::i("SlaveDevice",
+                       "Processing Master2Slave message for device 0x%08X, "
+                       "Message ID: 0x%02X",
+                       targetSlaveId,
+                       static_cast<int>(masterMessage->getMessageId()));
 
                 // Process message and create response
                 auto response =
                     messageProcessor->processAndCreateResponse(*masterMessage);
 
                 if (response) {
-                    std::cout
-                        << "[INFO] SlaveDevice: Generated response message"
-                        << std::endl;
+                    Log::i("SlaveDevice", "Generated response message");
 
                     std::vector<std::vector<uint8_t>> responseData;
                     DeviceStatus deviceStatus = {};
@@ -80,9 +76,7 @@ void SlaveDevice::processFrame(Frame &frame, const sockaddr_in &senderAddr) {
                         response->getMessageId() ==
                             static_cast<uint8_t>(
                                 Slave2BackendMessageId::CLIP_DATA_MSG)) {
-                        std::cout << "[INFO] SlaveDevice: Packing "
-                                     "Slave2Backend message"
-                                  << std::endl;
+                        Log::i("SlaveDevice", "Packing Slave2Backend message");
                         responseData = processor.packSlave2BackendMessage(
                             deviceId, deviceStatus, *response);
                     } else {
@@ -90,8 +84,7 @@ void SlaveDevice::processFrame(Frame &frame, const sockaddr_in &senderAddr) {
                             deviceId, *response);
                     }
 
-                    std::cout << "[INFO] SlaveDevice: Sending response:"
-                              << std::endl;
+                    Log::i("SlaveDevice", "Sending response:");
 
                     // Send all fragments
                     for (const auto &fragment : responseData) {
@@ -99,31 +92,25 @@ void SlaveDevice::processFrame(Frame &frame, const sockaddr_in &senderAddr) {
                     }
                 }
             } else {
-                std::cout << "[DEBUG] SlaveDevice: Message not for this device "
-                             "(target: 0x"
-                          << std::hex << targetSlaveId << ", our ID: 0x"
-                          << deviceId << ")" << std::dec << std::endl;
+                Log::d("SlaveDevice",
+                       "Message not for this device (target: 0x%08X, our ID: "
+                       "0x%08X)",
+                       targetSlaveId, deviceId);
             }
         } else {
-            std::cout
-                << "[ERROR] SlaveDevice: Failed to parse Master2Slave packet"
-                << std::endl;
+            Log::e("SlaveDevice", "Failed to parse Master2Slave packet");
         }
     } else {
-        std::cout << "[WARN] SlaveDevice: Unsupported packet type for Slave: 0x"
-                  << std::hex << static_cast<int>(frame.packetId) << std::dec
-                  << std::endl;
+        Log::w("SlaveDevice", "Unsupported packet type for Slave: 0x%02X",
+               static_cast<int>(frame.packetId));
     }
 }
 
 void SlaveDevice::run() {
-    std::cout << "[INFO] SlaveDevice: Slave device started" << std::endl;
-    std::cout << "[INFO] SlaveDevice: Device ID: 0x" << std::hex << deviceId
-              << std::dec << std::endl;
-    std::cout << "[INFO] SlaveDevice: Handling Master2Slave broadcast packets"
-              << std::endl;
-    std::cout << "[INFO] SlaveDevice: Sending responses to Master on port 8080"
-              << std::endl;
+    Log::i("SlaveDevice", "Slave device started");
+    Log::i("SlaveDevice", "Device ID: 0x%08X", deviceId);
+    Log::i("SlaveDevice", "Handling Master2Slave broadcast packets");
+    Log::i("SlaveDevice", "Sending responses to Master on port 8080");
 
     char buffer[1024];
     sockaddr_in senderAddr;
@@ -137,9 +124,8 @@ void SlaveDevice::run() {
 
             // 检查是否完成采集
             if (continuityCollector->isCollectionComplete()) {
-                std::cout << "[INFO] SlaveDevice: Data collection completed "
-                             "automatically"
-                          << std::endl;
+                Log::i("SlaveDevice",
+                       "Data collection completed automatically");
                 deviceState = SlaveDeviceState::COLLECTION_COMPLETE;
             }
         }

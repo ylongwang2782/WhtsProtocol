@@ -1,3 +1,4 @@
+#include "../Logger.h"
 #include "SlaveDevice.h"
 #include <exception>
 #include <iostream>
@@ -12,11 +13,9 @@ uint32_t getDeviceIdFromUser() {
     std::string input;
     uint32_t deviceId = 0x00000001; // Default value
 
-    std::cout << "\n=== WhtsProtocol Slave Device Configuration ==="
-              << std::endl;
-    std::cout << "Please enter Device ID (hex format, e.g., 0x3732485B)"
-              << std::endl;
-    std::cout << "Press Enter for default (0x00000001): ";
+    Log::i("Main", "=== WhtsProtocol Slave Device Configuration ===");
+    Log::i("Main", "Please enter Device ID (hex format, e.g., 0x3732485B)");
+    Log::i("Main", "Press Enter for default (0x00000001): ");
 
     std::getline(std::cin, input);
 
@@ -32,63 +31,52 @@ uint32_t getDeviceIdFromUser() {
             } else {
                 deviceId = std::stoul(input, nullptr, 16);
             }
-            std::cout << "Using Device ID: 0x" << std::hex << std::uppercase
-                      << deviceId << std::endl;
+            Log::i("Main", "Using Device ID: 0x%08X", deviceId);
         } catch (const std::exception &e) {
-            std::cout << "Invalid input, using default Device ID: 0x00000001"
-                      << std::endl;
+            Log::e("Main",
+                   "Invalid input, using default Device ID: 0x00000001");
             deviceId = 0x00000001;
         }
     } else {
-        std::cout << "Using default Device ID: 0x00000001" << std::endl;
+        Log::i("Main", "Using default Device ID: 0x00000001");
     }
 
     return deviceId;
 }
 
 int main() {
-    std::cout << "[INFO] Main: WhtsProtocol Slave Device" << std::endl;
-    std::cout << "[INFO] Main: =========================" << std::endl;
+    Log::i("Main", "WhtsProtocol Slave Device");
+    Log::i("Main", "=========================");
 
     try {
         // Get Device ID from user input
         uint32_t deviceId = getDeviceIdFromUser();
 
         // Display configuration after getting Device ID
-        std::cout << "[INFO] Main: \nPort Configuration (Wireless Broadcast "
-                     "Simulation):"
-                  << std::endl;
-        std::cout << "[INFO] Main:   Backend: 8079" << std::endl;
-        std::cout
-            << "[INFO] Main:   Master:  8080 (receives responses from Slaves)"
-            << std::endl;
-        std::cout << "[INFO] Main:   Slaves:  8081 (listen for Master "
-                     "broadcast commands)"
-                  << std::endl;
-        std::cout << "[INFO] Main: Wireless Communication Simulation:"
-                  << std::endl;
-        std::cout << "[INFO] Main:   Receives: Broadcast commands from Master"
-                  << std::endl;
-        std::cout << "[INFO] Main:   Sends: Unicast responses to Master"
-                  << std::endl;
-        std::cout << "[INFO] Main: Device Configuration:" << std::endl;
-        std::cout << "[INFO] Main:   Device ID: 0x" << std::hex << deviceId
-                  << std::dec << std::endl;
+        Log::i("Main", "Port Configuration (Wireless Broadcast Simulation):");
+        Log::i("Main", "  Backend: 8079");
+        Log::i("Main", "  Master:  8080 (receives responses from Slaves)");
+        Log::i("Main",
+               "  Slaves:  8081 (listen for Master broadcast commands)");
+        Log::i("Main", "Wireless Communication Simulation:");
+        Log::i("Main", "  Receives: Broadcast commands from Master");
+        Log::i("Main", "  Sends: Unicast responses to Master");
+        Log::i("Main", "Device Configuration:");
+        Log::i("Main", "  Device ID: 0x%08X", deviceId);
 
-        std::cout << "\nStarting slave device..." << std::endl;
+        Log::i("Main", "Starting slave device...");
 
         // Create and initialize slave device
         SlaveDevice device(8081, deviceId);
         if (!device.initialize()) {
-            std::cout << "[ERROR] Main: Failed to initialize slave device"
-                      << std::endl;
+            Log::e("Main", "Failed to initialize slave device");
             return 1;
         }
 
         // Run the device
         device.run();
     } catch (const std::exception &e) {
-        std::cout << "[ERROR] Main: Error: " << e.what() << std::endl;
+        Log::e("Main", "Error: %s", e.what());
         return 1;
     }
 

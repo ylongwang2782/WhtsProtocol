@@ -1,4 +1,5 @@
 #include "MessageProcessor.h"
+#include "../Logger.h"
 #include <chrono>
 #include <iostream>
 
@@ -26,9 +27,8 @@ void MessageProcessor::resetDevice() {
     std::lock_guard<std::mutex> lock(stateMutex);
     // 保留配置，但重置状态
     deviceState = SlaveDeviceState::CONFIGURED;
-    std::cout << "[INFO] SlaveDevice: Device reset to CONFIGURED state, "
-                 "configuration preserved"
-              << std::endl;
+    Log::i("SlaveDevice",
+           "Device reset to CONFIGURED state, configuration preserved");
 }
 
 std::unique_ptr<Message>
@@ -38,38 +38,33 @@ MessageProcessor::processAndCreateResponse(const Message &request) {
         auto syncMsg =
             dynamic_cast<const Master2Slave::SyncMessage *>(&request);
         if (syncMsg) {
-            std::cout
-                << "[INFO] MessageProcessor: Processing sync message - Mode: "
-                << static_cast<int>(syncMsg->mode)
-                << ", Timestamp: " << syncMsg->timestamp << std::endl;
+            Log::i("MessageProcessor",
+                   "Processing sync message - Mode: %d, Timestamp: %u",
+                   static_cast<int>(syncMsg->mode), syncMsg->timestamp);
 
             // 根据新逻辑：收到Sync Message后开始采集，不需要每次都配置
             std::lock_guard<std::mutex> lock(stateMutex);
             if (isConfigured) {
                 // 如果已配置，无论当前状态如何，都可以开始新的数据采集
-                std::cout << "[INFO] MessageProcessor: Starting data "
-                             "collection based on sync message"
-                          << std::endl;
+                Log::i("MessageProcessor",
+                       "Starting data collection based on sync message");
 
                 // 开始采集
                 if (continuityCollector->startCollection()) {
                     deviceState = SlaveDeviceState::COLLECTING;
-                    std::cout << "[INFO] MessageProcessor: Data collection "
-                                 "started successfully"
-                              << std::endl;
+                    Log::i("MessageProcessor",
+                           "Data collection started successfully");
 
                     // 立即处理一次采集状态，确保快速响应
                     continuityCollector->processCollection();
                 } else {
-                    std::cout << "[ERROR] MessageProcessor: Failed to start "
-                                 "data collection"
-                              << std::endl;
+                    Log::e("MessageProcessor",
+                           "Failed to start data collection");
                     deviceState = SlaveDeviceState::DEV_ERR;
                 }
             } else {
-                std::cout << "[WARN] MessageProcessor: Device not configured, "
-                             "cannot start collection"
-                          << std::endl;
+                Log::w("MessageProcessor",
+                       "Device not configured, cannot start collection");
             }
 
             return nullptr;
@@ -82,11 +77,11 @@ MessageProcessor::processAndCreateResponse(const Message &request) {
             dynamic_cast<const Master2Slave::ConductionConfigMessage *>(
                 &request);
         if (configMsg) {
-            std::cout << "[INFO] MessageProcessor: Processing conduction "
-                         "configuration - Time slot: "
-                      << static_cast<int>(configMsg->timeSlot)
-                      << ", Interval: " << static_cast<int>(configMsg->interval)
-                      << "ms" << std::endl;
+            Log::i("MessageProcessor",
+                   "Processing conduction configuration - Time slot: %d, "
+                   "Interval: %dms",
+                   static_cast<int>(configMsg->timeSlot),
+                   static_cast<int>(configMsg->interval));
 
             // 根据新逻辑：收到Conduction Config
             // message后配置ContinuityCollector 并且保存配置，后续可以重复使用
@@ -106,25 +101,21 @@ MessageProcessor::processAndCreateResponse(const Message &request) {
             if (continuityCollector->configure(currentConfig)) {
                 isConfigured = true;
                 deviceState = SlaveDeviceState::CONFIGURED;
-                std::cout << "[INFO] MessageProcessor: ContinuityCollector "
-                             "configured successfully - "
-                          << "Pins: " << static_cast<int>(currentConfig.num)
-                          << ", Start: "
-                          << static_cast<int>(currentConfig.startDetectionNum)
-                          << ", Total: "
-                          << static_cast<int>(currentConfig.totalDetectionNum)
-                          << ", Interval: " << currentConfig.interval << "ms"
-                          << std::endl;
-                std::cout
-                    << "[INFO] MessageProcessor: Configuration saved for "
-                       "future use. Send Sync message to start collection."
-                    << std::endl;
+                Log::i("MessageProcessor",
+                       "ContinuityCollector configured successfully - Pins: "
+                       "%d, Start: %d, Total: %d, Interval: %ums",
+                       static_cast<int>(currentConfig.num),
+                       static_cast<int>(currentConfig.startDetectionNum),
+                       static_cast<int>(currentConfig.totalDetectionNum),
+                       currentConfig.interval);
+                Log::i("MessageProcessor",
+                       "Configuration saved for future use. Send Sync message "
+                       "to start collection.");
             } else {
                 isConfigured = false;
                 deviceState = SlaveDeviceState::DEV_ERR;
-                std::cout << "[ERROR] MessageProcessor: Failed to configure "
-                             "ContinuityCollector"
-                          << std::endl;
+                Log::e("MessageProcessor",
+                       "Failed to configure ContinuityCollector");
             }
 
             auto response = std::make_unique<
@@ -145,11 +136,11 @@ MessageProcessor::processAndCreateResponse(const Message &request) {
             dynamic_cast<const Master2Slave::ResistanceConfigMessage *>(
                 &request);
         if (configMsg) {
-            std::cout << "[INFO] MessageProcessor: Processing resistance "
-                         "configuration - Time slot: "
-                      << static_cast<int>(configMsg->timeSlot)
-                      << ", Interval: " << static_cast<int>(configMsg->interval)
-                      << "ms" << std::endl;
+            Log::i("MessageProcessor",
+                   "Processing resistance configuration - Time slot: %d, "
+                   "Interval: %dms",
+                   static_cast<int>(configMsg->timeSlot),
+                   static_cast<int>(configMsg->interval));
 
             auto response = std::make_unique<
                 Slave2Master::ResistanceConfigResponseMessage>();
@@ -168,11 +159,10 @@ MessageProcessor::processAndCreateResponse(const Message &request) {
         auto configMsg =
             dynamic_cast<const Master2Slave::ClipConfigMessage *>(&request);
         if (configMsg) {
-            std::cout << "[INFO] MessageProcessor: Processing clip "
-                         "configuration - Interval: "
-                      << static_cast<int>(configMsg->interval)
-                      << "ms, Mode: " << static_cast<int>(configMsg->mode)
-                      << std::endl;
+            Log::i("MessageProcessor",
+                   "Processing clip configuration - Interval: %dms, Mode: %d",
+                   static_cast<int>(configMsg->interval),
+                   static_cast<int>(configMsg->mode));
 
             auto response =
                 std::make_unique<Slave2Master::ClipConfigResponseMessage>();
@@ -190,9 +180,7 @@ MessageProcessor::processAndCreateResponse(const Message &request) {
             dynamic_cast<const Master2Slave::ReadConductionDataMessage *>(
                 &request);
         if (readCondDataMsg) {
-            std::cout
-                << "[INFO] MessageProcessor: Processing read conduction data"
-                << std::endl;
+            Log::i("MessageProcessor", "Processing read conduction data");
 
             auto response =
                 std::make_unique<Slave2Backend::ConductionDataMessage>();
@@ -216,18 +204,17 @@ MessageProcessor::processAndCreateResponse(const Message &request) {
                 response->conductionLength = response->conductionData.size();
 
                 if (response->conductionLength > 0) {
-                    std::cout << "[INFO] MessageProcessor: Retrieved "
-                              << response->conductionLength
-                              << " bytes of conduction data" << std::endl;
+                    Log::i("MessageProcessor",
+                           "Retrieved %zu bytes of conduction data",
+                           response->conductionLength);
                 } else {
-                    std::cout << "[WARN] MessageProcessor: No collection data "
-                                 "available, device state: "
-                              << static_cast<int>(deviceState) << std::endl;
+                    Log::w("MessageProcessor",
+                           "No collection data available, device state: %d",
+                           static_cast<int>(deviceState));
                 }
             } else {
-                std::cout << "[WARN] MessageProcessor: Device not configured "
-                             "or collector not available"
-                          << std::endl;
+                Log::w("MessageProcessor",
+                       "Device not configured or collector not available");
                 response->conductionLength = 0;
                 response->conductionData.clear();
             }
@@ -242,9 +229,7 @@ MessageProcessor::processAndCreateResponse(const Message &request) {
             dynamic_cast<const Master2Slave::ReadResistanceDataMessage *>(
                 &request);
         if (readCondDataMsg) {
-            std::cout
-                << "[INFO] MessageProcessor: Processing read resistance data"
-                << std::endl;
+            Log::i("MessageProcessor", "Processing read resistance data");
 
             auto response =
                 std::make_unique<Slave2Backend::ResistanceDataMessage>();
@@ -259,8 +244,7 @@ MessageProcessor::processAndCreateResponse(const Message &request) {
         const auto *readClipDataMsg =
             dynamic_cast<const Master2Slave::ReadClipDataMessage *>(&request);
         if (readClipDataMsg) {
-            std::cout << "[INFO] MessageProcessor: Processing read clip data"
-                      << std::endl;
+            Log::i("MessageProcessor", "Processing read clip data");
 
             auto response = std::make_unique<Slave2Backend::ClipDataMessage>();
             response->clipData = 0xFF;
@@ -273,10 +257,10 @@ MessageProcessor::processAndCreateResponse(const Message &request) {
         const auto *pingMsg =
             dynamic_cast<const Master2Slave::PingReqMessage *>(&request);
         if (pingMsg) {
-            std::cout << "[INFO] MessageProcessor: Processing Ping request - "
-                         "Sequence number: "
-                      << pingMsg->sequenceNumber
-                      << ", Timestamp: " << pingMsg->timestamp << std::endl;
+            Log::i(
+                "MessageProcessor",
+                "Processing Ping request - Sequence number: %u, Timestamp: %u",
+                pingMsg->sequenceNumber, pingMsg->timestamp);
 
             auto response = std::make_unique<Slave2Master::PingRspMessage>();
             response->sequenceNumber = pingMsg->sequenceNumber;
@@ -290,9 +274,9 @@ MessageProcessor::processAndCreateResponse(const Message &request) {
         const auto *rstMsg =
             dynamic_cast<const Master2Slave::RstMessage *>(&request);
         if (rstMsg) {
-            std::cout << "[INFO] MessageProcessor: Processing reset message - "
-                         "Lock status: "
-                      << static_cast<int>(rstMsg->lockStatus) << std::endl;
+            Log::i("MessageProcessor",
+                   "Processing reset message - Lock status: %d",
+                   static_cast<int>(rstMsg->lockStatus));
 
             // 重置设备状态，但保留配置
             resetDevice();
@@ -311,9 +295,9 @@ MessageProcessor::processAndCreateResponse(const Message &request) {
         const auto *assignMsg =
             dynamic_cast<const Master2Slave::ShortIdAssignMessage *>(&request);
         if (assignMsg) {
-            std::cout << "[INFO] MessageProcessor: Processing short ID "
-                         "assignment - Short ID: "
-                      << static_cast<int>(assignMsg->shortId) << std::endl;
+            Log::i("MessageProcessor",
+                   "Processing short ID assignment - Short ID: %d",
+                   static_cast<int>(assignMsg->shortId));
 
             auto response =
                 std::make_unique<Slave2Master::ShortIdConfirmMessage>();
@@ -325,9 +309,8 @@ MessageProcessor::processAndCreateResponse(const Message &request) {
     }
 
     default:
-        std::cout << "[WARN] MessageProcessor: Unknown message type: 0x"
-                  << std::hex << static_cast<int>(request.getMessageId())
-                  << std::dec << std::endl;
+        Log::w("MessageProcessor", "Unknown message type: 0x%02X",
+               static_cast<int>(request.getMessageId()));
         break;
     }
 
