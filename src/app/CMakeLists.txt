@@ -5,6 +5,8 @@ cmake_minimum_required(VERSION 3.10)
 add_library(AppLogger STATIC
     Logger.cpp
     Logger.h
+    NetworkManager.cpp
+    NetworkManager.h
 )
 
 target_include_directories(AppLogger PUBLIC

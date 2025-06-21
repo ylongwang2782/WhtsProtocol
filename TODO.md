@@ -13,11 +13,31 @@
 │      VirtualGpio.cpp -> ./src/platform/windows ✓
 │      VirtualGpio.h -> ./src/platform/windows ✓
 
-- [ ] 确认一下master_main中使用的网络库
+- [x] 确认一下master_main中使用的网络库
 是使用的windows的网络库，还是使用的本工程下的NetworkHAL的接口库。
 如果是使用的windows的网络库，请修改一下使用本工程下的NetworkHAL接口库，也就是使用./HAL/Network/NetworkManager.h
 
-- [ ] 为了更好的分层次管理，将Gpio文件夹下的文件按功能粒度迁移，并保证master_main能够正常编译
+- [x] 为了更好的分层次管理，将Network文件夹下的文件按功能粒度迁移，并保证master_main能够正常编译
+└─Network
+        AsioUdpSocket.cpp -> ./src/platform/windows ✓
+        AsioUdpSocket.h -> ./src/platform/windows ✓
+        asio_example.cpp -> delete ✓
+        CMakeLists.txt -> delete ✓
+        example_usage.cpp -> delete ✓
+        IUdpSocket.h -> ./src/interface ✓
+        LwipUdpSocket.cpp -> ./src/platform/embedded ✓
+        LwipUdpSocket.h -> ./src/platform/embedded ✓
+        NetworkFactory.cpp -> ./src/Adapter ✓
+        NetworkFactory.h -> ./src/Adapter ✓
+        NetworkManager.cpp -> ./src/app ✓
+        NetworkManager.h -> ./src/app ✓
+        README_ASIO.md -> docs ✓
+        WindowsUdpSocket.cpp -> ./src/platform/windows ✓
+        WindowsUdpSocket.h -> ./src/platform/windows ✓
+
+- [ ] 确认一下slave_main中使用的网络库
+使用的是windows的网络库，还是使用的本工程下./src/app/NetworkManager的接口库。
+如果是使用的windows的网络库，请修改为使用本工程下/src/app/NetworkManage接口库
 
 - [x] 从机程序启动后，新增输入Device ID然后再启动，默认Device ID 为0x00000001
 - [x] 完成从机的数据采集功能。

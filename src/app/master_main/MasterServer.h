@@ -1,7 +1,7 @@
 #pragma once
 
-#include "../../HAL/Network/NetworkFactory.h"
-#include "../../HAL/Network/NetworkManager.h"
+#include "../../Adapter/NetworkFactory.h"
+#include "../NetworkManager.h"
 #include "CommandTracking.h"
 #include "DeviceManager.h"
 #include "MessageHandlers.h"

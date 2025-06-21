@@ -1,8 +1,9 @@
 #include "NetworkFactory.h"
-#include "AsioUdpSocket.h"
-#include "LwipUdpSocket.h"
-#include "WindowsUdpSocket.h"
+#include "../platform/embedded/LwipUdpSocket.h"
+#include "../platform/windows/AsioUdpSocket.h"
+#include "../platform/windows/WindowsUdpSocket.h"
 #include <iostream>
+
 
 namespace HAL {
 namespace Network {

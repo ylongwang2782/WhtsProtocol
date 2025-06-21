@@ -8,6 +8,8 @@ add_library(Adapter STATIC
     LoggerFactory.h
     GpioFactory.cpp      # 新添加的GPIO工厂实现
     GpioFactory.h        # 新添加的GPIO工厂头文件
+    NetworkFactory.cpp   # 网络工厂实现
+    NetworkFactory.h     # 网络工厂头文件
 )
 
 # 设置目标属性
@@ -44,7 +46,8 @@ endif()
 
 target_link_libraries(Adapter 
     PUBLIC 
-        Platform  # 链接平台特定的GPIO实现
+        WindowsPlatform  # 链接平台特定的实现
+        EmbeddedPlatform # 链接嵌入式平台实现
     PRIVATE
         Threads::Threads
 )
