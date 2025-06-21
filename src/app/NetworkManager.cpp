@@ -50,6 +50,11 @@ std::string NetworkManager::createUdpSocket(const std::string &socketId) {
         return "";
     }
 
+    socket->setReceiveCallback([this, id](const std::vector<uint8_t> &data,
+                                          const NetworkAddress &senderAddr) {
+        handleSocketReceive(id, data, senderAddr);
+    });
+
     sockets[id] = std::move(socket);
     std::cout << "[INFO] NetworkManager: Created UDP socket: " << id
               << std::endl;
@@ -68,6 +73,8 @@ bool NetworkManager::bindSocket(const std::string &socketId,
 
     bool result = it->second->bind(address, port);
     if (result) {
+        it->second->startAsyncReceive();
+
         std::cout << "[INFO] NetworkManager: Socket " << socketId
                   << " bound to " << (address.empty() ? "0.0.0.0" : address)
                   << ":" << port << std::endl;
@@ -189,6 +196,12 @@ void NetworkManager::setEventCallback(NetworkEventCallback callback) {
 
 void NetworkManager::start() {
     isRunning = true;
+
+    // 启动所有socket的异步接收
+    for (auto &pair : sockets) {
+        pair.second->startAsyncReceive();
+    }
+
     std::cout << "[INFO] NetworkManager: Started" << std::endl;
 }
 
