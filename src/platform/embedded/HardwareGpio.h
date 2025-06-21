@@ -1,7 +1,7 @@
 #ifndef HARDWARE_GPIO_H
 #define HARDWARE_GPIO_H
 
-#include "IGpio.h"
+#include "../../interface/IGpio.h"
 #include <cstdint>
 
 namespace HAL {

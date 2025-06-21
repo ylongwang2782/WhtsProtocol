@@ -1,6 +1,6 @@
 #include "GpioFactory.h"
-#include "HardwareGpio.h"
-#include "VirtualGpio.h"
+#include "../platform/embedded/HardwareGpio.h"
+#include "../platform/windows/VirtualGpio.h"
 
 namespace HAL {
 

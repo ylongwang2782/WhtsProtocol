@@ -1,7 +1,7 @@
 #ifndef VIRTUAL_GPIO_H
 #define VIRTUAL_GPIO_H
 
-#include "IGpio.h"
+#include "../../interface/IGpio.h"
 #include <cstdint>
 
 namespace HAL {

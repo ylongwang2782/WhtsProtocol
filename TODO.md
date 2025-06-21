@@ -2,6 +2,17 @@
 
 ## 🚧 功能开发
 
+- [x] 为了更好的分层次管理，将Gpio文件夹下的文件按功能粒度迁移，并保证slave_main能够正常编译
+│      Gpio.cpp -> ./src/app/slave_main ✓
+│      Gpio.h -> ./src/app/slave_main ✓
+│      GpioFactory.cpp -> ./src/Adapter ✓
+│      GpioFactory.h -> ./src/Adapter ✓
+│      HardwareGpio.cpp -> ./src/platform/embedded ✓
+│      HardwareGpio.h -> ./src/platform/embedded ✓
+│      IGpio.h -> ./src/interface ✓
+│      VirtualGpio.cpp -> ./src/platform/windows ✓
+│      VirtualGpio.h -> ./src/platform/windows ✓
+
 - [x] 从机程序启动后，新增输入Device ID然后再启动，默认Device ID 为0x00000001
 - [x] 完成从机的数据采集功能。
 1. 收到Conduction Config message后根据消息中的信息配置ContinuityCollector

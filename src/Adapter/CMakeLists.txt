@@ -6,6 +6,8 @@ add_library(Adapter STATIC
     ContinuityCollector.h
     LoggerFactory.cpp
     LoggerFactory.h
+    GpioFactory.cpp      # 新添加的GPIO工厂实现
+    GpioFactory.h        # 新添加的GPIO工厂头文件
 )
 
 # 设置目标属性
@@ -42,7 +44,7 @@ endif()
 
 target_link_libraries(Adapter 
     PUBLIC 
-        Gpio  # 直接链接Gpio库而不是HAL接口库
+        Platform  # 链接平台特定的GPIO实现
     PRIVATE
         Threads::Threads
 )
@@ -60,4 +62,19 @@ endif()
 # 为调试版本添加调试信息
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")
     target_compile_definitions(Adapter PRIVATE DEBUG_MODE=1)
-endif() 
+endif()
+
+# 根据配置添加编译定义
+if(GPIO_USE_HARDWARE)
+    target_compile_definitions(Adapter PUBLIC GPIO_USE_HARDWARE=1)
+endif()
+
+if(GPIO_USE_VIRTUAL)
+    target_compile_definitions(Adapter PUBLIC GPIO_USE_VIRTUAL=1)
+endif()
+
+# 设置目标属性
+set_target_properties(Adapter PROPERTIES
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED ON
+) 

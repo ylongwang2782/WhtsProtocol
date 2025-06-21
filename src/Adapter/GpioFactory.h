@@ -1,7 +1,7 @@
 #ifndef GPIO_FACTORY_H
 #define GPIO_FACTORY_H
 
-#include "IGpio.h"
+#include "../interface/IGpio.h"
 #include <memory>
 
 namespace HAL {

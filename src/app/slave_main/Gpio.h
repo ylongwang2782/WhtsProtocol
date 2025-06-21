@@ -8,10 +8,11 @@
 // - 硬件GPIO实现 (HardwareGpio) - 用于真实硬件平台
 // - GPIO工厂类 (GpioFactory) - 统一的实例创建接口
 
-#include "GpioFactory.h"
-#include "HardwareGpio.h"
-#include "IGpio.h"
-#include "VirtualGpio.h"
+#include "../../Adapter/GpioFactory.h"
+#include "../../interface/IGpio.h"
+#include "../../platform/embedded/HardwareGpio.h"
+#include "../../platform/windows/VirtualGpio.h"
+
 
 // 为了向后兼容，导出常用的类型和类到全局命名空间
 namespace HAL {

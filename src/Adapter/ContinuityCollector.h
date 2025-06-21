@@ -1,8 +1,8 @@
 #ifndef CONTINUITY_COLLECTOR_H
 #define CONTINUITY_COLLECTOR_H
 
-#include "IGpio.h"
-#include "VirtualGpio.h"
+#include "../interface/IGpio.h"
+#include "../platform/windows/VirtualGpio.h"
 #include <atomic>
 #include <chrono>
 #include <cstdint>
