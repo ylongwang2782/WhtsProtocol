@@ -58,8 +58,3 @@ set_target_properties(${SLAVE_TARGET} PROPERTIES
 if(WIN32)
     target_link_libraries(${SLAVE_TARGET} ws2_32)
 endif()
-
-# Set output directory (optional)
-set_target_properties(${SLAVE_TARGET} PROPERTIES
-    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
-) 

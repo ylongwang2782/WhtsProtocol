@@ -4,7 +4,6 @@
 #include <iostream>
 #include <sstream>
 
-
 namespace HAL {
 namespace Network {
 

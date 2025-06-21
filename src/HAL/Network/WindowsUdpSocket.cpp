@@ -2,7 +2,6 @@
 #include <cstring>
 #include <iostream>
 
-
 namespace HAL {
 namespace Network {
 
@@ -80,7 +79,10 @@ bool WindowsUdpSocket::bind(const std::string &address, uint16_t port) {
 
     if (::bind(sock, (sockaddr *)&localAddr, sizeof(localAddr)) ==
         SOCKET_ERROR) {
-        std::cerr << "[ERROR] WindowsUdpSocket: Bind failed" << std::endl;
+        int error = WSAGetLastError();
+        std::cerr << "[ERROR] WindowsUdpSocket: Bind failed on "
+                  << (address.empty() ? "0.0.0.0" : address) << ":" << port
+                  << " - Error code: " << error << std::endl;
         return false;
     }
 

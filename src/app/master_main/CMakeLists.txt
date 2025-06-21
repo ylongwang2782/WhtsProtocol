@@ -12,6 +12,7 @@ target_include_directories(MasterCore
     PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/../../HAL/Gpio
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../HAL/Network
     ${CMAKE_CURRENT_SOURCE_DIR}/../../Adapter
     ${CMAKE_CURRENT_SOURCE_DIR}/..
     ${CMAKE_CURRENT_SOURCE_DIR}/../../protocol
@@ -55,4 +56,4 @@ target_include_directories(Master
 set_target_properties(Master PROPERTIES
     CXX_STANDARD 17
     CXX_STANDARD_REQUIRED ON
-) 
+)

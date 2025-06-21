@@ -2,55 +2,47 @@
 #include "../Logger.h"
 #include "MessageHandlers.h"
 
-// Define this to suppress deprecated warnings for inet_addr
-#define _WINSOCK_DEPRECATED_NO_WARNINGS
-
 #include <algorithm>
 #include <chrono>
 #include <iomanip>
 #include <sstream>
+#include <thread>
 
 MasterServer::MasterServer(uint16_t listenPort) : port(listenPort) {
-#ifdef _WIN32
-    WSADATA wsaData;
-    if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0) {
-        throw std::runtime_error("WSAStartup failed");
-    }
-#endif
-
-    sock = socket(AF_INET, SOCK_DGRAM, 0);
-    if (sock == INVALID_SOCKET) {
-        throw std::runtime_error("Socket creation failed");
+    // 创建网络管理器
+    networkManager = NetworkFactory::createNetworkManager();
+    if (!networkManager) {
+        throw std::runtime_error("Failed to create network manager");
     }
 
-    // Enable broadcast for the socket (to simulate wireless broadcast)
-    int broadcast = 1;
-    if (setsockopt(sock, SOL_SOCKET, SO_BROADCAST, (char *)&broadcast,
-                   sizeof(broadcast)) == SOCKET_ERROR) {
+    // 创建主套接字
+    mainSocketId = networkManager->createUdpSocket("master_main");
+    if (mainSocketId.empty()) {
+        throw std::runtime_error("Failed to create main UDP socket");
+    }
+
+    // 设置网络事件回调
+    networkManager->setEventCallback(
+        [this](const NetworkEvent &event) { onNetworkEvent(event); });
+
+    // 启用广播功能
+    if (!networkManager->setSocketBroadcast(mainSocketId, true)) {
         Log::w("Master", "Failed to enable broadcast option");
     }
 
-    // Configure server address (Master listens on port 8080)
-    serverAddr.sin_family = AF_INET;
-    serverAddr.sin_addr.s_addr = INADDR_ANY;
-    serverAddr.sin_port = htons(port);
+    // 配置服务器地址 (Master监听端口8080)
+    serverAddr = NetworkAddress("0.0.0.0", port);
 
-    // Configure backend address (Backend uses port 8079)
-    backendAddr.sin_family = AF_INET;
-    backendAddr.sin_addr.s_addr = inet_addr("127.0.0.1"); // localhost
-    backendAddr.sin_port = htons(8079);
+    // 配置后端地址 (Backend使用端口8079)
+    backendAddr = NetworkAddress("127.0.0.1", 8079);
 
-    // Configure slave broadcast address (Broadcast to all slaves on port 8081)
-    // Using localhost broadcast for simulation
-    slaveBroadcastAddr.sin_family = AF_INET;
-    slaveBroadcastAddr.sin_addr.s_addr =
-        inet_addr("127.255.255.255"); // Local broadcast
-    slaveBroadcastAddr.sin_port = htons(8081);
+    // 配置从机广播地址 (广播到所有从机端口8081)
+    // 使用本地广播进行模拟
+    slaveBroadcastAddr = NetworkAddress("127.255.255.255", 8081);
 
-    if (bind(sock, (sockaddr *)&serverAddr, sizeof(serverAddr)) ==
-        SOCKET_ERROR) {
-        closesocket(sock);
-        throw std::runtime_error("Bind failed");
+    if (!networkManager->bindSocket(mainSocketId, serverAddr.ip,
+                                    serverAddr.port)) {
+        throw std::runtime_error("Failed to bind socket");
     }
 
     initializeMessageHandlers();
@@ -61,10 +53,9 @@ MasterServer::MasterServer(uint16_t listenPort) : port(listenPort) {
 }
 
 MasterServer::~MasterServer() {
-    closesocket(sock);
-#ifdef _WIN32
-    WSACleanup();
-#endif
+    if (networkManager) {
+        networkManager->cleanup();
+    }
 }
 
 void MasterServer::initializeMessageHandlers() {
@@ -134,7 +125,7 @@ std::string MasterServer::bytesToHexString(const std::vector<uint8_t> &bytes) {
 }
 
 void MasterServer::sendResponseToBackend(std::unique_ptr<Message> response,
-                                         const sockaddr_in &clientAddr) {
+                                         const NetworkAddress &clientAddr) {
     if (!response)
         return;
 
@@ -144,9 +135,7 @@ void MasterServer::sendResponseToBackend(std::unique_ptr<Message> response,
     for (const auto &fragment : responseData) {
         printBytes(fragment, "Master2Backend response data");
         // Send to backend on port 8079
-        sendto(sock, reinterpret_cast<const char *>(fragment.data()),
-               static_cast<int>(fragment.size()), 0, (sockaddr *)&backendAddr,
-               sizeof(backendAddr));
+        networkManager->sendTo(mainSocketId, fragment, backendAddr);
     }
 
     Log::i("Master", "Master2Backend response sent to backend (port 8079)");
@@ -154,7 +143,7 @@ void MasterServer::sendResponseToBackend(std::unique_ptr<Message> response,
 
 void MasterServer::sendCommandToSlave(uint32_t slaveId,
                                       std::unique_ptr<Message> command,
-                                      const sockaddr_in &clientAddr) {
+                                      const NetworkAddress &clientAddr) {
     if (!command)
         return;
 
@@ -166,9 +155,8 @@ void MasterServer::sendCommandToSlave(uint32_t slaveId,
     for (const auto &fragment : commandData) {
         printBytes(fragment, "Master2Slave command data");
         // Send to slaves on port 8081
-        sendto(sock, reinterpret_cast<const char *>(fragment.data()),
-               static_cast<int>(fragment.size()), 0,
-               (sockaddr *)&slaveBroadcastAddr, sizeof(slaveBroadcastAddr));
+        networkManager->broadcast(mainSocketId, fragment,
+                                  slaveBroadcastAddr.port);
     }
 
     Log::i("Master", "Master2Slave command broadcasted to slaves (port 8081)");
@@ -176,7 +164,7 @@ void MasterServer::sendCommandToSlave(uint32_t slaveId,
 
 void MasterServer::sendCommandToSlaveWithRetry(uint32_t slaveId,
                                                std::unique_ptr<Message> command,
-                                               const sockaddr_in &clientAddr,
+                                               const NetworkAddress &clientAddr,
                                                uint8_t maxRetries) {
     // Create a pending command for retry management
     PendingCommand pendingCmd(slaveId, std::move(command), clientAddr,
@@ -240,7 +228,7 @@ void MasterServer::processPendingCommands() {
 
 void MasterServer::addPingSession(uint32_t targetId, uint8_t pingMode,
                                   uint16_t totalCount, uint16_t interval,
-                                  const sockaddr_in &clientAddr) {
+                                  const NetworkAddress &clientAddr) {
     // Create a new ping session
     PingSession session(targetId, pingMode, totalCount, interval, clientAddr);
     session.lastPingTime = getCurrentTimestampMs();
@@ -288,8 +276,8 @@ void MasterServer::processPingSessions() {
     }
 }
 
-void MasterServer::processBackend2MasterMessage(const Message &message,
-                                                const sockaddr_in &clientAddr) {
+void MasterServer::processBackend2MasterMessage(
+    const Message &message, const NetworkAddress &clientAddr) {
     uint8_t messageId = message.getMessageId();
     Log::i("Master", "Processing Backend2Master message, ID: 0x%02X",
            static_cast<int>(messageId));
@@ -315,9 +303,9 @@ void MasterServer::processBackend2MasterMessage(const Message &message,
     }
 }
 
-void MasterServer::processSlave2MasterMessage(uint32_t slaveId,
-                                              const Message &message,
-                                              const sockaddr_in &clientAddr) {
+void MasterServer::processSlave2MasterMessage(
+    uint32_t slaveId, const Message &message,
+    const NetworkAddress &clientAddr) {
     Log::i("Master", "Processing Slave2Master message from slave 0x%08X",
            slaveId);
 
@@ -327,13 +315,10 @@ void MasterServer::processSlave2MasterMessage(uint32_t slaveId,
             dynamic_cast<const Slave2Master::ConductionConfigResponseMessage *>(
                 &message);
         if (rspMsg) {
-            Log::i("Master", "Received conduction config response - Status: %d",
-                   static_cast<int>(rspMsg->status));
-
-            // 配置成功，加入连接状态
-            if (rspMsg->status == 0) {
-                deviceManager.addSlave(slaveId);
-            }
+            Log::i("Master",
+                   "Received conduction config response from slave 0x%08X",
+                   slaveId);
+            deviceManager.addSlave(slaveId);
         }
         break;
     }
@@ -343,29 +328,10 @@ void MasterServer::processSlave2MasterMessage(uint32_t slaveId,
             dynamic_cast<const Slave2Master::ResistanceConfigResponseMessage *>(
                 &message);
         if (rspMsg) {
-            Log::i("Master", "Received resistance config response - Status: %d",
-                   static_cast<int>(rspMsg->status));
-
-            // 配置成功，加入连接状态
-            if (rspMsg->status == 0) {
-                deviceManager.addSlave(slaveId);
-            }
-        }
-        break;
-    }
-
-    case static_cast<uint8_t>(Slave2MasterMessageId::CLIP_CFG_RSP_MSG): {
-        const auto *rspMsg =
-            dynamic_cast<const Slave2Master::ClipConfigResponseMessage *>(
-                &message);
-        if (rspMsg) {
-            Log::i("Master", "Received clip config response - Status: %d",
-                   static_cast<int>(rspMsg->status));
-
-            // 配置成功，加入连接状态
-            if (rspMsg->status == 0) {
-                deviceManager.addSlave(slaveId);
-            }
+            Log::i("Master",
+                   "Received resistance config response from slave 0x%08X",
+                   slaveId);
+            deviceManager.addSlave(slaveId);
         }
         break;
     }
@@ -374,66 +340,21 @@ void MasterServer::processSlave2MasterMessage(uint32_t slaveId,
         const auto *pingRsp =
             dynamic_cast<const Slave2Master::PingRspMessage *>(&message);
         if (pingRsp) {
-            uint32_t currentTime = getCurrentTimestampMs();
-            uint32_t roundTripTime = currentTime - pingRsp->timestamp;
-
             Log::i("Master",
-                   "Received ping response - Sequence: %d, RTT: %d ms",
-                   static_cast<int>(pingRsp->sequenceNumber), roundTripTime);
+                   "Received ping response from slave 0x%08X (seq=%d)", slaveId,
+                   pingRsp->sequenceNumber);
 
-            // Mark ping as successful in active ping sessions
+            // Update ping session success count
             for (auto &session : activePingSessions) {
                 if (session.targetId == slaveId) {
                     session.successCount++;
                     break;
                 }
             }
-
-            // Add or update slave in connected devices
-            deviceManager.addSlave(slaveId);
         }
         break;
     }
 
-    case static_cast<uint8_t>(Slave2MasterMessageId::RST_RSP_MSG): {
-        const auto *rstRsp =
-            dynamic_cast<const Slave2Master::RstResponseMessage *>(&message);
-        if (rstRsp) {
-            Log::i("Master", "Received reset response - Status: %d",
-                   static_cast<int>(rstRsp->status));
-        }
-        break;
-    }
-
-    case static_cast<uint8_t>(Slave2MasterMessageId::ANNOUNCE_MSG): {
-        const auto *announceMsg =
-            dynamic_cast<const Slave2Master::AnnounceMessage *>(&message);
-        if (announceMsg) {
-            Log::i("Master", "Received announce message - Version: %d.%d.%d",
-                   static_cast<int>(announceMsg->versionMajor),
-                   static_cast<int>(announceMsg->versionMinor),
-                   announceMsg->versionPatch);
-
-            // Register the slave as connected
-            deviceManager.addSlave(slaveId);
-        }
-        break;
-    }
-
-    case static_cast<uint8_t>(Slave2MasterMessageId::SHORT_ID_CONFIRM_MSG): {
-        const auto *confirmMsg =
-            dynamic_cast<const Slave2Master::ShortIdConfirmMessage *>(&message);
-        if (confirmMsg) {
-            Log::i("Master", "Received short ID confirm message - Short ID: %d",
-                   static_cast<int>(confirmMsg->shortId));
-
-            // Update slave short ID
-            deviceManager.addSlave(slaveId, confirmMsg->shortId);
-        }
-        break;
-    }
-
-    // 处理从机数据类型消息 - 这些是 Slave2Backend 消息，需要转发给后端
     case static_cast<uint8_t>(Slave2BackendMessageId::CONDUCTION_DATA_MSG): {
         const auto *dataMsg =
             dynamic_cast<const Slave2Backend::ConductionDataMessage *>(
@@ -452,9 +373,7 @@ void MasterServer::processSlave2MasterMessage(uint32_t slaveId,
                 processor.packSlave2BackendMessage(slaveId, status, *dataMsg);
 
             for (const auto &packet : packets) {
-                sendto(sock, reinterpret_cast<const char *>(packet.data()),
-                       static_cast<int>(packet.size()), 0,
-                       (sockaddr *)&backendAddr, sizeof(backendAddr));
+                networkManager->sendTo(mainSocketId, packet, backendAddr);
 
                 Log::i("Master",
                        "Forwarded conduction data to backend - %zu bytes",
@@ -482,9 +401,7 @@ void MasterServer::processSlave2MasterMessage(uint32_t slaveId,
                 processor.packSlave2BackendMessage(slaveId, status, *dataMsg);
 
             for (const auto &packet : packets) {
-                sendto(sock, reinterpret_cast<const char *>(packet.data()),
-                       static_cast<int>(packet.size()), 0,
-                       (sockaddr *)&backendAddr, sizeof(backendAddr));
+                networkManager->sendTo(mainSocketId, packet, backendAddr);
 
                 Log::i("Master",
                        "Forwarded resistance data to backend - %zu bytes",
@@ -511,9 +428,7 @@ void MasterServer::processSlave2MasterMessage(uint32_t slaveId,
                 processor.packSlave2BackendMessage(slaveId, status, *dataMsg);
 
             for (const auto &packet : packets) {
-                sendto(sock, reinterpret_cast<const char *>(packet.data()),
-                       static_cast<int>(packet.size()), 0,
-                       (sockaddr *)&backendAddr, sizeof(backendAddr));
+                networkManager->sendTo(mainSocketId, packet, backendAddr);
 
                 Log::i("Master", "Forwarded clip data to backend - %zu bytes",
                        packet.size());
@@ -529,7 +444,8 @@ void MasterServer::processSlave2MasterMessage(uint32_t slaveId,
     }
 }
 
-void MasterServer::processFrame(Frame &frame, const sockaddr_in &clientAddr) {
+void MasterServer::processFrame(Frame &frame,
+                                const NetworkAddress &clientAddr) {
     Log::i("Master", "Processing frame - PacketId: 0x%02X, payload size: %zu",
            static_cast<int>(frame.packetId), frame.payload.size());
 
@@ -557,6 +473,63 @@ void MasterServer::processFrame(Frame &frame, const sockaddr_in &clientAddr) {
     }
 }
 
+void MasterServer::onNetworkEvent(const NetworkEvent &event) {
+    switch (event.type) {
+    case NetworkEventType::DATA_RECEIVED: {
+        Log::i("Master", "Received %zu bytes from %s:%d", event.data.size(),
+               event.remoteAddr.ip.c_str(), event.remoteAddr.port);
+
+        // Convert to hex string for processing (maintaining compatibility)
+        std::string receivedStr = bytesToHexString(event.data);
+
+        // Remove spaces and line breaks
+        receivedStr.erase(
+            std::remove_if(receivedStr.begin(), receivedStr.end(),
+                           [](char c) { return std::isspace(c); }),
+            receivedStr.end());
+
+        std::vector<uint8_t> data;
+
+        // If it's a hexadecimal string, convert it to bytes
+        if (receivedStr.length() > 0 &&
+            std::all_of(receivedStr.begin(), receivedStr.end(),
+                        [](char c) { return std::isxdigit(c); })) {
+            data = hexStringToBytes(receivedStr);
+            Log::i("Master", "Received hexadecimal string: %s",
+                   receivedStr.c_str());
+        } else {
+            // Otherwise, treat it as binary data directly
+            data = event.data;
+            Log::i("Master", "Received binary data");
+        }
+
+        if (!data.empty()) {
+            processor.processReceivedData(data);
+            Frame receivedFrame;
+            int frameCount = 0;
+            while (processor.getNextCompleteFrame(receivedFrame)) {
+                frameCount++;
+                Log::i("Master",
+                       "Parsed frame %d: PacketId=%d, payload size=%zu",
+                       frameCount, (int)receivedFrame.packetId,
+                       receivedFrame.payload.size());
+                processFrame(receivedFrame, event.remoteAddr);
+            }
+        }
+        break;
+    }
+    case NetworkEventType::DATA_SENT:
+        Log::d("Master", "Data sent successfully");
+        break;
+    case NetworkEventType::CONNECTION_ERROR:
+        Log::e("Master", "Network error: %s", event.errorMessage.c_str());
+        break;
+    case NetworkEventType::SOCKET_CLOSED:
+        Log::i("Master", "Socket closed: %s", event.socketId.c_str());
+        break;
+    }
+}
+
 void MasterServer::run() {
     Log::i("Master", "Master server started, waiting for UDP messages...");
     Log::i("Master",
@@ -566,11 +539,8 @@ void MasterServer::run() {
     Log::i("Master", "Broadcasting commands to Slaves on port 8081");
     Log::i("Master", "Press Ctrl+C to exit");
 
-    char buffer[1024];
-    sockaddr_in clientAddr;
-    socklen_t clientAddrLen = sizeof(clientAddr);
-
     processor.setMTU(100);
+    networkManager->start();
 
     while (true) {
         // Process pending commands, ping sessions, and data collection
@@ -578,47 +548,11 @@ void MasterServer::run() {
         processPingSessions();
         processDataCollection();
 
-        int bytesReceived = recvfrom(sock, buffer, sizeof(buffer), 0,
-                                     (sockaddr *)&clientAddr, &clientAddrLen);
+        // Process network events
+        networkManager->processEvents();
 
-        if (bytesReceived > 0) {
-            std::string receivedStr(buffer, bytesReceived);
-
-            // Remove spaces and line breaks
-            receivedStr.erase(
-                std::remove_if(receivedStr.begin(), receivedStr.end(),
-                               [](char c) { return std::isspace(c); }),
-                receivedStr.end());
-
-            std::vector<uint8_t> data;
-
-            // If it's a hexadecimal string, convert it to bytes
-            if (receivedStr.length() > 0 &&
-                std::all_of(receivedStr.begin(), receivedStr.end(),
-                            [](char c) { return std::isxdigit(c); })) {
-                data = hexStringToBytes(receivedStr);
-                Log::i("Master", "Received hexadecimal string: %s",
-                       receivedStr.c_str());
-            } else {
-                // Otherwise, treat it as binary data directly
-                data.assign(buffer, buffer + bytesReceived);
-                Log::i("Master", "Received binary data");
-            }
-
-            if (!data.empty()) {
-                processor.processReceivedData(data);
-                Frame receivedFrame;
-                int frameCount = 0;
-                while (processor.getNextCompleteFrame(receivedFrame)) {
-                    frameCount++;
-                    Log::i("Master",
-                           "Parsed frame %d: PacketId=%d, payload size=%zu",
-                           frameCount, (int)receivedFrame.packetId,
-                           receivedFrame.payload.size());
-                    processFrame(receivedFrame, clientAddr);
-                }
-            }
-        }
+        // Small delay to prevent busy waiting
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
 }
 
@@ -644,85 +578,37 @@ void MasterServer::processDataCollection() {
         break;
 
     case CollectionCycleState::COLLECTING:
-        // 处于采集状态
-        if (!dm.isSyncSent()) {
-            // 发送Sync消息给所有从机
-            for (uint32_t slaveId : dm.getConnectedSlaves()) {
-                if (dm.hasSlaveConfig(slaveId)) {
-                    auto syncCmd =
-                        std::make_unique<Master2Slave::SyncMessage>();
-
-                    // 根据当前模式设置同步消息的模式
-                    syncCmd->mode = dm.getCurrentMode();
-                    syncCmd->timestamp = currentTime;
-
-                    // 发送同步消息
-                    sendCommandToSlave(slaveId, std::move(syncCmd),
-                                       slaveBroadcastAddr);
-
-                    Log::i("MasterServer",
-                           "Sent Sync message to slave 0x%08X with mode %d",
-                           slaveId, dm.getCurrentMode());
-                }
-            }
-
-            // 标记同步消息已发送
-            dm.markSyncSent(currentTime);
-
-        } else if (dm.shouldEnterReadingPhase(currentTime)) {
-            // 所有从机都已完成采集，可以进入读取数据阶段
+        // 处于采集状态，检查是否应该进入读取数据阶段
+        if (dm.shouldEnterReadingPhase(currentTime)) {
             dm.enterReadingPhase();
-            Log::i(
-                "MasterServer",
-                "All slaves completed data collection, entering reading phase");
+            Log::i("MasterServer", "Entered reading data phase");
         }
         break;
 
     case CollectionCycleState::READING_DATA:
-        // 处于读取数据阶段，向未请求数据的从机发送读取数据请求
-        for (uint32_t slaveId : dm.getSlavesForDataRequest()) {
-            // 根据当前模式创建相应的读取数据消息
-            std::unique_ptr<Message> readDataCmd;
-
-            switch (dm.getCurrentMode()) {
-            case 0: // Conduction模式
-                readDataCmd =
-                    std::make_unique<Master2Slave::ReadConductionDataMessage>();
-                break;
-
-            case 1: // Resistance模式
-                readDataCmd =
-                    std::make_unique<Master2Slave::ReadResistanceDataMessage>();
-                break;
-
-            case 2: // Clip模式
-                readDataCmd =
-                    std::make_unique<Master2Slave::ReadClipDataMessage>();
-                break;
-            }
-
-            if (readDataCmd) {
-                // 发送读取数据命令
-                sendCommandToSlaveWithRetry(slaveId, std::move(readDataCmd),
-                                            slaveBroadcastAddr, 3);
-
-                // 标记数据已请求
-                dm.markDataRequested(slaveId);
-
-                Log::i("MasterServer",
-                       "Sent Read Data command to slave 0x%08X for mode %d",
-                       slaveId, dm.getCurrentMode());
+        // 处于读取数据阶段，检查是否完成
+        if (dm.isAllDataReceived()) {
+            // 数据采集周期完成，可以开始新的周期
+            if (dm.shouldStartNewCycle(currentTime)) {
+                dm.startNewCycle(currentTime);
+                Log::i("MasterServer", "Started new data collection cycle");
             }
         }
         break;
 
     case CollectionCycleState::COMPLETE:
-        // 采集周期已完成，检查是否应该开始新的采集周期
+        // 完成状态，检查是否应该开始新的周期
         if (dm.shouldStartNewCycle(currentTime)) {
             dm.startNewCycle(currentTime);
-            Log::i("MasterServer",
-                   "Started new data collection cycle after completion");
+            Log::i("MasterServer", "Started new data collection cycle");
         }
         break;
     }
+}
+
+uint32_t MasterServer::getCurrentTimestampMs() {
+    return static_cast<uint32_t>(
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now().time_since_epoch())
+            .count());
 }

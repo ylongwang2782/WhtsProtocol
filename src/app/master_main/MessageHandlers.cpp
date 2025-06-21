@@ -1,6 +1,9 @@
 #include "MessageHandlers.h"
+#include "../../HAL/Network/IUdpSocket.h"
 #include "../Logger.h"
 #include "MasterServer.h"
+
+using namespace HAL::Network;
 
 // Slave Configuration Message Handler
 std::unique_ptr<Message>
@@ -11,18 +14,7 @@ SlaveConfigHandler::processMessage(const Message &message,
     if (!configMsg)
         return nullptr;
 
-    Log::i("SlaveConfigHandler",
-           "Processing slave configuration - Slave count: %d",
-           static_cast<int>(configMsg->slaveNum));
-
-    for (const auto &slave : configMsg->slaves) {
-        Log::i(
-            "SlaveConfigHandler",
-            "  Slave ID: 0x%08X, Conduction: %d, Resistance: %d, Clip mode: %d",
-            slave.id, static_cast<int>(slave.conductionNum),
-            static_cast<int>(slave.resistanceNum),
-            static_cast<int>(slave.clipMode));
-    }
+    Log::i("SlaveConfigHandler", "Processing slave config message");
 
     auto response =
         std::make_unique<Master2Backend::SlaveConfigResponseMessage>();
@@ -75,7 +67,7 @@ ModeConfigHandler::processMessage(const Message &message,
     if (!modeMsg)
         return nullptr;
 
-    Log::i("ModeConfigHandler", "Processing mode configuration - Mode: %d",
+    Log::i("ModeConfigHandler", "Processing mode config message - Mode: %d",
            static_cast<int>(modeMsg->mode));
 
     auto response =
@@ -93,18 +85,20 @@ void ModeConfigHandler::executeActions(const Message &message,
     if (!modeMsg)
         return;
 
-    // Store mode information
+    // Set the mode in device manager
     server->getDeviceManager().setCurrentMode(modeMsg->mode);
 
-    // Send configuration commands to slaves based on mode and stored slave
-    // configs
+    Log::i("ModeConfigHandler", "Mode set to %d",
+           static_cast<int>(modeMsg->mode));
+
+    // Get connected slaves and send configuration based on mode
     auto connectedSlaves = server->getDeviceManager().getConnectedSlaves();
+
     for (uint32_t slaveId : connectedSlaves) {
         if (server->getDeviceManager().hasSlaveConfig(slaveId)) {
-            auto slaveConfig =
+            const auto &slaveConfig =
                 server->getDeviceManager().getSlaveConfig(slaveId);
 
-            // Send different configuration messages based on mode
             switch (modeMsg->mode) {
             case 0: // Conduction mode
                 if (slaveConfig.conductionNum > 0) {
@@ -118,7 +112,7 @@ void ModeConfigHandler::executeActions(const Message &message,
 
                     // Use retry mechanism for important configuration commands
                     server->sendCommandToSlaveWithRetry(
-                        slaveId, std::move(condCmd), sockaddr_in{}, 3);
+                        slaveId, std::move(condCmd), NetworkAddress{}, 3);
                     Log::i("ModeConfigHandler",
                            "Sent conduction config to slave 0x%08X", slaveId);
                 }
@@ -135,7 +129,7 @@ void ModeConfigHandler::executeActions(const Message &message,
                     resCmd->num = slaveConfig.resistanceNum;
 
                     server->sendCommandToSlaveWithRetry(
-                        slaveId, std::move(resCmd), sockaddr_in{}, 3);
+                        slaveId, std::move(resCmd), NetworkAddress{}, 3);
                     Log::i("ModeConfigHandler",
                            "Sent resistance config to slave 0x%08X", slaveId);
                 }
@@ -150,7 +144,7 @@ void ModeConfigHandler::executeActions(const Message &message,
                 clipCmd->clipPin = slaveConfig.clipStatus;
 
                 server->sendCommandToSlaveWithRetry(slaveId, std::move(clipCmd),
-                                                    sockaddr_in{}, 3);
+                                                    NetworkAddress{}, 3);
                 Log::i("ModeConfigHandler", "Sent clip config to slave 0x%08X",
                        slaveId);
             } break;
@@ -220,7 +214,7 @@ void ResetHandler::executeActions(const Message &message,
             resetCmd->clipLed = slave.clipStatus;
 
             server->sendCommandToSlaveWithRetry(slave.id, std::move(resetCmd),
-                                                sockaddr_in{}, 3);
+                                                NetworkAddress{}, 3);
             successCount++;
             Log::i(
                 "ResetHandler",
@@ -283,10 +277,10 @@ void ControlHandler::executeActions(const Message &message,
                 // 发送同步消息但设置模式为0（停止）
                 auto syncCmd = std::make_unique<Master2Slave::SyncMessage>();
                 syncCmd->mode = 0; // 停止模式
-                syncCmd->timestamp = getCurrentTimestampMs();
+                syncCmd->timestamp = server->getCurrentTimestampMs();
 
                 server->sendCommandToSlaveWithRetry(slaveId, std::move(syncCmd),
-                                                    sockaddr_in{}, 1);
+                                                    NetworkAddress{}, 1);
             }
         }
         break;
@@ -315,17 +309,19 @@ void ControlHandler::executeActions(const Message &message,
     case 2: // 重置
         Log::i("ControlHandler", "Resetting all devices");
 
-        // 发送重置命令给所有从机
+        // 重置所有从机状态
         for (uint32_t slaveId : deviceManager.getConnectedSlaves()) {
-            auto rstCmd = std::make_unique<Master2Slave::RstMessage>();
-            rstCmd->lockStatus = 0;
-            rstCmd->clipLed = 0;
+            if (deviceManager.hasSlaveConfig(slaveId)) {
+                auto resetCmd = std::make_unique<Master2Slave::RstMessage>();
+                resetCmd->lockStatus = 0; // 解锁
+                resetCmd->clipLed = 0;    // 关闭LED
 
-            server->sendCommandToSlaveWithRetry(slaveId, std::move(rstCmd),
-                                                sockaddr_in{}, 3);
+                server->sendCommandToSlaveWithRetry(
+                    slaveId, std::move(resetCmd), NetworkAddress{}, 1);
+            }
         }
 
-        // 重置所有采集状态
+        // 重置设备管理器状态
         deviceManager.resetDataCollection();
         break;
 
@@ -346,8 +342,8 @@ PingControlHandler::processMessage(const Message &message,
         return nullptr;
 
     Log::i("PingControlHandler",
-           "Processing ping control - Mode: %d, Count: %d, Interval: %dms, "
-           "Target: 0x%08X",
+           "Processing ping control message - Mode: %d, Count: %d, Interval: "
+           "%d, Target: 0x%08X",
            static_cast<int>(pingMsg->pingMode), pingMsg->pingCount,
            pingMsg->interval, pingMsg->destinationId);
 
@@ -367,20 +363,16 @@ void PingControlHandler::executeActions(const Message &message,
     if (!pingMsg)
         return;
 
-    // Start ping session for the target slave
-    if (server->getDeviceManager().isSlaveConnected(pingMsg->destinationId)) {
-        server->addPingSession(pingMsg->destinationId, pingMsg->pingMode,
-                               pingMsg->pingCount, pingMsg->interval,
-                               sockaddr_in{});
-        Log::i("PingControlHandler",
-               "Started ping session to target 0x%08X (mode=%d, count=%d, "
-               "interval=%dms)",
-               pingMsg->destinationId, static_cast<int>(pingMsg->pingMode),
-               pingMsg->pingCount, pingMsg->interval);
-    } else {
-        Log::w("PingControlHandler", "Target slave 0x%08X is not connected",
-               pingMsg->destinationId);
-    }
+    // Add ping session to the server
+    server->addPingSession(pingMsg->destinationId, pingMsg->pingMode,
+                           pingMsg->pingCount, pingMsg->interval,
+                           NetworkAddress{});
+
+    Log::i("PingControlHandler",
+           "Added ping session for target 0x%08X (mode=%d, count=%d, "
+           "interval=%d)",
+           pingMsg->destinationId, static_cast<int>(pingMsg->pingMode),
+           pingMsg->pingCount, pingMsg->interval);
 }
 
 // Device List Request Handler
@@ -395,33 +387,32 @@ DeviceListHandler::processMessage(const Message &message,
     Log::i("DeviceListHandler", "Processing device list request");
 
     auto connectedSlaves = server->getDeviceManager().getConnectedSlaves();
+
     auto response =
         std::make_unique<Master2Backend::DeviceListResponseMessage>();
     response->deviceCount = static_cast<uint8_t>(connectedSlaves.size());
 
-    // Add connected devices
+    // Add connected slaves to response
     for (uint32_t slaveId : connectedSlaves) {
-        Master2Backend::DeviceListResponseMessage::DeviceInfo device;
-        device.deviceId = slaveId;
-        device.shortId = server->getDeviceManager().getSlaveShortId(slaveId);
-        device.online = 1;
-        device.versionMajor = 1;
-        device.versionMinor = 2;
-        device.versionPatch = 3;
-        response->devices.push_back(device);
+        Master2Backend::DeviceListResponseMessage::DeviceInfo deviceInfo;
+        deviceInfo.deviceId = slaveId;
+        deviceInfo.shortId =
+            server->getDeviceManager().getSlaveShortId(slaveId);
+        deviceInfo.online = 1; // Connected
+        deviceInfo.versionMajor = 1;
+        deviceInfo.versionMinor = 2;
+        deviceInfo.versionPatch = 3;
+        response->devices.push_back(deviceInfo);
     }
 
-    Log::i("DeviceListHandler", "Returning device list with %d devices",
+    Log::i("DeviceListHandler", "Returning %d connected devices",
            response->deviceCount);
+
     return std::move(response);
 }
 
 void DeviceListHandler::executeActions(const Message &message,
                                        MasterServer *server) {
-    // Device list request doesn't require additional actions
-    // The response generation already provides the current device list
-    auto connectedSlaves = server->getDeviceManager().getConnectedSlaves();
-    Log::i("DeviceListHandler",
-           "Device list request processed - %zu devices currently connected",
-           connectedSlaves.size());
+    // No additional actions needed for device list request
+    Log::d("DeviceListHandler", "Device list request processed");
 }

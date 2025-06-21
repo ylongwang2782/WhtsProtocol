@@ -1,5 +1,7 @@
 #pragma once
 
+#include "../../HAL/Network/NetworkFactory.h"
+#include "../../HAL/Network/NetworkManager.h"
 #include "CommandTracking.h"
 #include "DeviceManager.h"
 #include "MessageHandlers.h"
@@ -8,31 +10,16 @@
 #include <unordered_map>
 #include <vector>
 
-#ifdef _WIN32
-#include <winsock2.h>
-#include <ws2tcpip.h>
-#pragma comment(lib, "ws2_32.lib")
-typedef int socklen_t;
-#else
-#include <arpa/inet.h>
-#include <netinet/in.h>
-#include <sys/socket.h>
-#include <unistd.h>
-
-#define SOCKET int
-#define INVALID_SOCKET -1
-#define SOCKET_ERROR -1
-#define closesocket close
-#endif
-
 using namespace WhtsProtocol;
+using namespace HAL::Network;
 
 class MasterServer {
   private:
-    SOCKET sock;
-    sockaddr_in serverAddr;
-    sockaddr_in backendAddr;        // Backend address (port 8079)
-    sockaddr_in slaveBroadcastAddr; // Slave broadcast address (port 8081)
+    std::unique_ptr<NetworkManager> networkManager;
+    std::string mainSocketId;
+    NetworkAddress serverAddr;
+    NetworkAddress backendAddr;        // Backend address (port 8079)
+    NetworkAddress slaveBroadcastAddr; // Slave broadcast address (port 8081)
     ProtocolProcessor processor;
     uint16_t port;
     DeviceManager deviceManager;
@@ -48,33 +35,34 @@ class MasterServer {
     // Utility methods
     static std::vector<uint8_t> hexStringToBytes(const std::string &hex);
     static uint32_t getCurrentTimestamp();
+    uint32_t getCurrentTimestampMs();
     void printBytes(const std::vector<uint8_t> &data,
                     const std::string &description);
     std::string bytesToHexString(const std::vector<uint8_t> &bytes);
 
     // Core processing methods
     void processBackend2MasterMessage(const Message &message,
-                                      const sockaddr_in &clientAddr);
+                                      const NetworkAddress &clientAddr);
     void processSlave2MasterMessage(uint32_t slaveId, const Message &message,
-                                    const sockaddr_in &clientAddr);
-    void processFrame(Frame &frame, const sockaddr_in &clientAddr);
+                                    const NetworkAddress &clientAddr);
+    void processFrame(Frame &frame, const NetworkAddress &clientAddr);
     void run();
 
     // Message sending methods
     void sendResponseToBackend(std::unique_ptr<Message> response,
-                               const sockaddr_in &clientAddr);
+                               const NetworkAddress &clientAddr);
     void sendCommandToSlave(uint32_t slaveId, std::unique_ptr<Message> command,
-                            const sockaddr_in &clientAddr);
+                            const NetworkAddress &clientAddr);
     void sendCommandToSlaveWithRetry(uint32_t slaveId,
                                      std::unique_ptr<Message> command,
-                                     const sockaddr_in &clientAddr,
+                                     const NetworkAddress &clientAddr,
                                      uint8_t maxRetries = 3);
 
     // Command management
     void processPendingCommands();
     void addPingSession(uint32_t targetId, uint8_t pingMode,
                         uint16_t totalCount, uint16_t interval,
-                        const sockaddr_in &clientAddr);
+                        const NetworkAddress &clientAddr);
     void processPingSessions();
 
     // 数据采集管理
@@ -83,7 +71,7 @@ class MasterServer {
     // Device management
     DeviceManager &getDeviceManager() { return deviceManager; }
     ProtocolProcessor &getProcessor() { return processor; }
-    SOCKET getSocket() { return sock; }
+    NetworkManager *getNetworkManager() { return networkManager.get(); }
 
     // Register message handlers
     void registerMessageHandler(uint8_t messageId,
@@ -91,4 +79,5 @@ class MasterServer {
 
   private:
     void initializeMessageHandlers();
+    void onNetworkEvent(const NetworkEvent &event);
 };
