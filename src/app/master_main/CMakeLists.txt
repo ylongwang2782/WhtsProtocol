@@ -11,9 +11,10 @@ add_library(MasterCore
 target_include_directories(MasterCore 
     PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../HAL/Gpio
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../HAL/Network
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../interface
     ${CMAKE_CURRENT_SOURCE_DIR}/../../Adapter
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../platform/windows
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../platform/embedded
     ${CMAKE_CURRENT_SOURCE_DIR}/..
     ${CMAKE_CURRENT_SOURCE_DIR}/../../protocol
     ${CMAKE_CURRENT_SOURCE_DIR}/../../protocol/messages
@@ -26,6 +27,8 @@ target_link_libraries(MasterCore
     AppLogger
     HAL
     Adapter
+    Interface
+    Platform
 )
 
 # Set C++ standard
@@ -34,10 +37,8 @@ set_target_properties(MasterCore PROPERTIES
     CXX_STANDARD_REQUIRED ON
 )
 
-# Platform-specific settings
-if(WIN32)
-    target_link_libraries(MasterCore ws2_32)
-endif()
+# Platform-specific settings are now handled by the NetworkManager interface library
+# No need to directly link ws2_32 as it's handled by the platform-specific implementations
 
 # Create Master executable
 add_executable(Master main.cpp)

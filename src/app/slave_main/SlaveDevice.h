@@ -1,12 +1,16 @@
 #pragma once
 
+#include "../../Adapter/NetworkFactory.h"
+#include "../NetworkManager.h"
 #include "ContinuityCollector.h"
 #include "MessageProcessor.h"
-#include "NetworkManager.h"
 #include "SlaveDeviceState.h"
 #include "WhtsProtocol.h"
 #include <memory>
 #include <mutex>
+
+
+using namespace HAL::Network;
 
 namespace SlaveApp {
 
@@ -26,10 +30,16 @@ namespace SlaveApp {
  * - 在主循环中定期处理采集状态
  * - 接收 Sync Message 后立即执行一次数据采集，确保快速响应
  * - 非阻塞套接字实现，确保数据采集过程中仍能接收网络消息
+ * - 直接使用共用的NetworkManager，无需适配器层
  */
 class SlaveDevice {
   private:
     std::unique_ptr<NetworkManager> networkManager;
+    std::string mainSocketId;
+    NetworkAddress serverAddr;
+    NetworkAddress masterAddr;
+    WhtsProtocol::ProtocolProcessor processor;
+
     std::unique_ptr<MessageProcessor> messageProcessor;
     std::unique_ptr<Adapter::ContinuityCollector> continuityCollector;
 
@@ -39,6 +49,7 @@ class SlaveDevice {
     bool isConfigured;
     std::mutex stateMutex;
 
+    uint16_t port;
     uint32_t deviceId;
 
   public:
@@ -57,7 +68,7 @@ class SlaveDevice {
      * @param senderAddr 发送方地址
      */
     void processFrame(WhtsProtocol::Frame &frame,
-                      const HAL::Network::NetworkAddress &senderAddr);
+                      const NetworkAddress &senderAddr);
 
     /**
      * 运行主循环

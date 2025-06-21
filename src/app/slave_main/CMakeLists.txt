@@ -8,7 +8,6 @@ set(SLAVE_SOURCES
     main.cpp
     SlaveDevice.cpp
     MessageProcessor.cpp
-    NetworkManager.cpp
     Gpio.cpp
 )
 
@@ -17,7 +16,6 @@ set(SLAVE_HEADERS
     SlaveDeviceState.h
     SlaveDevice.h
     MessageProcessor.h
-    NetworkManager.h
     Gpio.h
 )
 

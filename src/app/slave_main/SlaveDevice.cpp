@@ -10,9 +10,14 @@ using namespace HAL::Network;
 namespace SlaveApp {
 
 SlaveDevice::SlaveDevice(uint16_t listenPort, uint32_t id)
-    : deviceId(id), deviceState(SlaveDeviceState::IDLE), isConfigured(false) {
+    : port(listenPort), deviceId(id), deviceState(SlaveDeviceState::IDLE),
+      isConfigured(false) {
 
-    networkManager = std::make_unique<NetworkManager>(listenPort, deviceId);
+    // 创建网络管理器
+    networkManager = NetworkFactory::createNetworkManager();
+    if (!networkManager) {
+        throw std::runtime_error("Failed to create network manager");
+    }
 
     // Initialize continuity collector with virtual GPIO
     continuityCollector =
@@ -25,16 +30,42 @@ SlaveDevice::SlaveDevice(uint16_t listenPort, uint32_t id)
 }
 
 bool SlaveDevice::initialize() {
-    if (!networkManager->initialize()) {
-        Log::e("SlaveDevice", "Failed to initialize network manager");
+    // 创建主套接字
+    mainSocketId = networkManager->createUdpSocket("slave_main");
+    if (mainSocketId.empty()) {
+        Log::e("SlaveDevice", "Failed to create main UDP socket");
         return false;
     }
 
-    // Set non-blocking mode for the socket
-    networkManager->setNonBlocking();
+    // 启用广播功能
+    if (!networkManager->setSocketBroadcast(mainSocketId, true)) {
+        Log::w("SlaveDevice", "Failed to enable broadcast option");
+    }
+
+    // 配置服务器地址 (Slave监听端口8081接收广播)
+    serverAddr = NetworkAddress("0.0.0.0", port);
+
+    // 配置主机地址 (Master使用端口8080)
+    masterAddr = NetworkAddress("127.0.0.1", 8080);
+
+    // 绑定套接字
+    if (!networkManager->bindSocket(mainSocketId, serverAddr.ip,
+                                    serverAddr.port)) {
+        Log::e("SlaveDevice", "Failed to bind socket");
+        return false;
+    }
+
+    // 设置为非阻塞模式
+    networkManager->setSocketNonBlocking(mainSocketId, true);
+
+    processor.setMTU(100);
 
     Log::i("SlaveDevice", "Slave device (ID: 0x%08X) initialized successfully",
            deviceId);
+    Log::i("SlaveDevice", "Network initialized - listening on port %d", port);
+    Log::i("SlaveDevice", "Master communication port: 8080");
+    Log::i("SlaveDevice", "Wireless broadcast reception enabled");
+
     return true;
 }
 
@@ -47,7 +78,6 @@ void SlaveDevice::processFrame(Frame &frame, const NetworkAddress &senderAddr) {
         uint32_t targetSlaveId;
         std::unique_ptr<Message> masterMessage;
 
-        auto &processor = networkManager->getProcessor();
         if (processor.parseMaster2SlavePacket(frame.payload, targetSlaveId,
                                               masterMessage)) {
             // Check if this message is for us (or broadcast)
@@ -87,9 +117,10 @@ void SlaveDevice::processFrame(Frame &frame, const NetworkAddress &senderAddr) {
 
                     Log::i("SlaveDevice", "Sending response:");
 
-                    // Send all fragments
+                    // Send all fragments to master
                     for (const auto &fragment : responseData) {
-                        networkManager->sendResponse(fragment);
+                        networkManager->sendTo(mainSocketId, fragment,
+                                               masterAddr);
                     }
                 }
             } else {
@@ -113,10 +144,8 @@ void SlaveDevice::run() {
     Log::i("SlaveDevice", "Handling Master2Slave broadcast packets");
     Log::i("SlaveDevice", "Sending responses to Master on port 8080");
 
-    char buffer[1024];
+    uint8_t buffer[1024];
     NetworkAddress senderAddr;
-
-    auto &processor = networkManager->getProcessor();
 
     while (true) {
         // 处理采集状态（状态机）
@@ -132,8 +161,8 @@ void SlaveDevice::run() {
         }
 
         // 接收数据（非阻塞）
-        int bytesReceived =
-            networkManager->receiveData(buffer, sizeof(buffer), senderAddr);
+        int bytesReceived = networkManager->receiveFrom(
+            mainSocketId, buffer, sizeof(buffer), senderAddr);
 
         if (bytesReceived > 0) {
             std::vector<uint8_t> data(buffer, buffer + bytesReceived);
