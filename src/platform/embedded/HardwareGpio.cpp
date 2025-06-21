@@ -7,7 +7,8 @@
 // #include <linux/gpio.h>          // Linux平台
 // #include <wiringPi.h>            // Raspberry Pi平台
 
-namespace HAL {
+namespace Platform {
+namespace Embedded {
 
 HardwareGpio::HardwareGpio() {
     // 初始化硬件GPIO系统
@@ -209,4 +210,5 @@ bool HardwareGpio::platformSetMode(uint8_t pin, GpioMode mode) {
     return true;
 }
 
-} // namespace HAL
+} // namespace Embedded
+} // namespace Platform

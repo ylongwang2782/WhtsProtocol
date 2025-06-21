@@ -5,7 +5,7 @@
 #include <memory>
 
 using namespace WhtsProtocol;
-using namespace HAL::Network;
+using namespace Interface;
 
 // Command tracking for timeout and retry management
 struct PendingCommand {

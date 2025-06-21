@@ -3,8 +3,7 @@
 #include "../Logger.h"
 #include "MasterServer.h"
 
-
-using namespace HAL::Network;
+using namespace Interface;
 
 // Slave Configuration Message Handler
 std::unique_ptr<Message>

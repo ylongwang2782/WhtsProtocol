@@ -12,6 +12,8 @@
 #include <string>
 #include <vector>
 
+using namespace Interface;
+
 namespace Adapter {
 
 // 导通状态枚举
@@ -62,9 +64,9 @@ class ContinuityCollector {
   private:
     static constexpr uint8_t MAX_GPIO_PINS = 64;
 
-    std::unique_ptr<HAL::IGpio> gpio_; // GPIO接口
-    CollectorConfig config_;           // 采集配置
-    ContinuityMatrix dataMatrix_;      // 数据矩阵
+    std::unique_ptr<IGpio> gpio_; // GPIO接口
+    CollectorConfig config_;      // 采集配置
+    ContinuityMatrix dataMatrix_; // 数据矩阵
 
     CollectionStatus status_;           // 采集状态
     uint8_t currentCycle_;              // 当前周期
@@ -80,7 +82,7 @@ class ContinuityCollector {
     uint32_t getCurrentTimeMs();                      // 获取当前时间（毫秒）
 
   public:
-    ContinuityCollector(std::unique_ptr<HAL::IGpio> gpio);
+    ContinuityCollector(std::unique_ptr<IGpio> gpio);
     ~ContinuityCollector();
 
     // 删除拷贝构造函数和赋值操作符
@@ -108,32 +110,41 @@ class ContinuityCollector {
     // 获取总周期数
     uint8_t getTotalCycles() const;
 
-    // 获取采集进度 (0-100)
-    uint8_t getProgress() const;
+    // 获取采集数据
+    ContinuityMatrix getDataMatrix() const;
 
-    // 是否采集完成
+    // 获取指定周期的数据
+    std::vector<ContinuityState> getCycleData(uint8_t cycle) const;
+
+    // 检查是否有新数据
+    bool hasNewData() const;
+
+    // 检查采集是否完成
     bool isCollectionComplete() const;
 
-    // 获取数据矩阵（线程安全）
-    ContinuityMatrix getDataMatrix() const;
+    // 设置进度回调
+    void setProgressCallback(ProgressCallback callback);
+
+    // 获取采集配置
+    const CollectorConfig &getConfig() const { return config_; }
+
+    // 获取采集进度百分比
+    float getProgress() const;
+
+    // 获取数据矩阵的字符串表示（用于调试）
+    std::string getDataMatrixString() const;
+
+    // 获取GPIO接口（用于测试）
+    IGpio *getGpio() const { return gpio_.get(); }
 
     // 获取压缩数据向量（按位压缩，小端模式）
     std::vector<uint8_t> getDataVector() const;
-
-    // 获取指定周期的数据行
-    std::vector<ContinuityState> getCycleData(uint8_t cycle) const;
 
     // 获取指定引脚的所有周期数据
     std::vector<ContinuityState> getPinData(uint8_t pin) const;
 
     // 清空数据矩阵
     void clearData();
-
-    // 设置进度回调函数
-    void setProgressCallback(ProgressCallback callback);
-
-    // 获取配置信息
-    const CollectorConfig &getConfig() const;
 
     // 导出数据为字符串格式（用于调试和显示）
     std::string exportDataAsString() const;
@@ -152,15 +163,15 @@ class ContinuityCollector {
     void simulateTestPattern(uint32_t pattern);
 };
 
-// 工厂类
+// 导通数据采集器工厂类
 class ContinuityCollectorFactory {
   public:
-    // 创建带虚拟GPIO的采集器
+    // 创建带有虚拟GPIO的采集器（用于测试）
     static std::unique_ptr<ContinuityCollector> createWithVirtualGpio();
 
-    // 创建带自定义GPIO的采集器
+    // 创建带有自定义GPIO的采集器
     static std::unique_ptr<ContinuityCollector>
-    createWithCustomGpio(std::unique_ptr<HAL::IGpio> gpio);
+    createWithCustomGpio(std::unique_ptr<IGpio> gpio);
 };
 
 } // namespace Adapter

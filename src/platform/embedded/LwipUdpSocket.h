@@ -2,61 +2,45 @@
 
 #include "../../interface/IUdpSocket.h"
 
-// lwip相关头文件
+using namespace Interface;
+
+// 条件编译：只有定义了USE_LWIP才使用LWIP实现
 #ifdef USE_LWIP
+
+// LWIP相关头文件
+extern "C" {
+#include "lwip/api.h"
+#include "lwip/arch.h"
 #include "lwip/inet.h"
-#include "lwip/ip_addr.h"
-#include "lwip/netif.h"
-#include "lwip/pbuf.h"
+#include "lwip/opt.h"
+#include "lwip/sockets.h"
+#include "lwip/sys.h"
 #include "lwip/udp.h"
 
-#endif
+}
 
-#include <mutex>
-#include <queue>
+#include <functional>
+#include <memory>
+#include <vector>
 
-namespace HAL {
-namespace Network {
-
-#ifdef USE_LWIP
-
-/**
- * 接收数据包结构
- */
-struct ReceivedPacket {
-    std::vector<uint8_t> data;
-    NetworkAddress senderAddr;
-
-    ReceivedPacket(const std::vector<uint8_t> &d, const NetworkAddress &addr)
-        : data(d), senderAddr(addr) {}
-};
+namespace Platform {
+namespace Embedded {
 
 /**
- * 嵌入式平台UDP套接字实现
- * 使用lwip协议栈
+ * LWIP UDP套接字实现
+ * 基于LWIP的嵌入式系统UDP实现
  */
 class LwipUdpSocket : public IUdpSocket {
   private:
-    struct udp_pcb *udpPcb;
-    NetworkAddress localAddress;
+    struct netconn *conn;
     bool isInitialized;
     bool isBound;
+    NetworkAddress localAddress;
     UdpReceiveCallback receiveCallback;
 
-    // 接收数据队列（用于非阻塞接收）
-    std::queue<ReceivedPacket> receiveQueue;
-    std::mutex queueMutex;
-
-    // lwip回调函数
-    static void udpReceiveCallback(void *arg, struct udp_pcb *pcb,
-                                   struct pbuf *p, const ip_addr_t *addr,
-                                   u16_t port);
-
     // 辅助方法
-    ip_addr_t createIpAddr(const std::string &ipStr) const;
-    NetworkAddress createNetworkAddress(const ip_addr_t *addr,
-                                        u16_t port) const;
-    bool isValidIpAddress(const std::string &ip) const;
+    ip_addr_t stringToIpAddr(const std::string &ipStr);
+    std::string ipAddrToString(const ip_addr_t &addr);
 
   public:
     LwipUdpSocket();
@@ -89,7 +73,7 @@ class LwipUdpSocket : public IUdpSocket {
 };
 
 /**
- * lwip UDP套接字工厂
+ * LWIP UDP套接字工厂
  */
 class LwipUdpSocketFactory : public IUdpSocketFactory {
   public:
@@ -98,7 +82,13 @@ class LwipUdpSocketFactory : public IUdpSocketFactory {
     }
 };
 
+} // namespace Embedded
+} // namespace Platform
+
 #else
+
+namespace Platform {
+namespace Embedded {
 
 /**
  * 当未定义USE_LWIP时的空实现
@@ -140,7 +130,7 @@ class LwipUdpSocketFactory : public IUdpSocketFactory {
     }
 };
 
-#endif // USE_LWIP
+} // namespace Embedded
+} // namespace Platform
 
-} // namespace Network
-} // namespace HAL
+#endif // USE_LWIP

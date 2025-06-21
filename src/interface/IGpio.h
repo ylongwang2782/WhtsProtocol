@@ -5,7 +5,7 @@
 #include <memory>
 #include <vector>
 
-namespace HAL {
+namespace Interface {
 
 // GPIO引脚状态枚举
 enum class GpioState : uint8_t {
@@ -56,6 +56,6 @@ class IGpio {
     virtual bool deinit(uint8_t pin) = 0;
 };
 
-} // namespace HAL
+} // namespace Interface
 
 #endif // IGPIO_H

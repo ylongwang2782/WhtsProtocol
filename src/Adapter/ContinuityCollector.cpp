@@ -7,7 +7,7 @@
 
 namespace Adapter {
 
-ContinuityCollector::ContinuityCollector(std::unique_ptr<HAL::IGpio> gpio)
+ContinuityCollector::ContinuityCollector(std::unique_ptr<IGpio> gpio)
     : gpio_(std::move(gpio)), status_(CollectionStatus::IDLE), currentCycle_(0),
       lastProcessTime_(0) {
 
@@ -153,12 +153,16 @@ uint8_t ContinuityCollector::getTotalCycles() const {
     return config_.totalDetectionNum;
 }
 
-uint8_t ContinuityCollector::getProgress() const {
+float ContinuityCollector::getProgress() const {
     uint8_t current = getCurrentCycle();
     uint8_t total = getTotalCycles();
     if (total == 0)
-        return 0;
-    return static_cast<uint8_t>((current * 100) / total);
+        return 0.0f;
+    return static_cast<float>(current * 100) / total;
+}
+
+bool ContinuityCollector::hasNewData() const {
+    return status_ == CollectionStatus::COMPLETED;
 }
 
 bool ContinuityCollector::isCollectionComplete() const {
@@ -247,10 +251,6 @@ void ContinuityCollector::setProgressCallback(ProgressCallback callback) {
     progressCallback_ = callback;
 }
 
-const CollectorConfig &ContinuityCollector::getConfig() const {
-    return config_;
-}
-
 std::string ContinuityCollector::exportDataAsString() const {
     std::lock_guard<std::mutex> lock(dataMutex_);
     std::ostringstream oss;
@@ -332,7 +332,8 @@ ContinuityCollector::calculateStatistics() const {
 void ContinuityCollector::simulateTestPattern(uint32_t pattern) {
     if (gpio_) {
         // 将模式传递给虚拟GPIO以模拟特定的测试环境
-        auto *virtualGpio = dynamic_cast<HAL::VirtualGpio *>(gpio_.get());
+        auto *virtualGpio =
+            dynamic_cast<Platform::Windows::VirtualGpio *>(gpio_.get());
         if (virtualGpio) {
             virtualGpio->simulateContinuityPattern(config_.num, pattern);
         }
@@ -345,7 +346,7 @@ void ContinuityCollector::initializeGpioPins() {
 
     // 初始化所有需要的GPIO引脚为输入模式
     for (uint8_t pin = 0; pin < config_.num; pin++) {
-        HAL::GpioConfig gpioConfig(pin, HAL::GpioMode::INPUT_PULLDOWN);
+        GpioConfig gpioConfig(pin, GpioMode::INPUT_PULLDOWN);
         gpio_->init(gpioConfig);
     }
 }
@@ -365,11 +366,11 @@ ContinuityState ContinuityCollector::readPinContinuity(uint8_t pin) {
         return ContinuityState::DISCONNECTED;
     }
 
-    HAL::GpioState gpioState = gpio_->read(pin);
+    GpioState gpioState = gpio_->read(pin);
 
     // 高电平表示导通，低电平表示断开
-    return (gpioState == HAL::GpioState::HIGH) ? ContinuityState::CONNECTED
-                                               : ContinuityState::DISCONNECTED;
+    return (gpioState == GpioState::HIGH) ? ContinuityState::CONNECTED
+                                          : ContinuityState::DISCONNECTED;
 }
 
 void ContinuityCollector::configurePinsForCycle(uint8_t currentCycle) {
@@ -391,20 +392,19 @@ void ContinuityCollector::configurePinsForCycle(uint8_t currentCycle) {
         for (uint8_t pin = 0; pin < config_.num; pin++) {
             if (pin == activePin) {
                 // 设置为输出模式并输出高电平
-                HAL::GpioConfig gpioConfig(pin, HAL::GpioMode::OUTPUT,
-                                           HAL::GpioState::HIGH);
+                GpioConfig gpioConfig(pin, GpioMode::OUTPUT, GpioState::HIGH);
                 gpio_->init(gpioConfig);
-                gpio_->write(pin, HAL::GpioState::HIGH);
+                gpio_->write(pin, GpioState::HIGH);
             } else {
                 // 设置为输入下拉模式
-                HAL::GpioConfig gpioConfig(pin, HAL::GpioMode::INPUT_PULLDOWN);
+                GpioConfig gpioConfig(pin, GpioMode::INPUT_PULLDOWN);
                 gpio_->init(gpioConfig);
             }
         }
     } else {
         // 在检测范围外，所有引脚都设置为输入下拉模式
         for (uint8_t pin = 0; pin < config_.num; pin++) {
-            HAL::GpioConfig gpioConfig(pin, HAL::GpioMode::INPUT_PULLDOWN);
+            GpioConfig gpioConfig(pin, GpioMode::INPUT_PULLDOWN);
             gpio_->init(gpioConfig);
         }
     }
@@ -414,13 +414,12 @@ void ContinuityCollector::configurePinsForCycle(uint8_t currentCycle) {
 std::unique_ptr<ContinuityCollector>
 ContinuityCollectorFactory::createWithVirtualGpio() {
     // 使用统一接口，平台由CMake配置决定
-    auto gpio = HAL::GpioFactory::createGpio();
+    auto gpio = Adapter::GpioFactory::createGpio();
     return std::make_unique<ContinuityCollector>(std::move(gpio));
 }
 
 std::unique_ptr<ContinuityCollector>
-ContinuityCollectorFactory::createWithCustomGpio(
-    std::unique_ptr<HAL::IGpio> gpio) {
+ContinuityCollectorFactory::createWithCustomGpio(std::unique_ptr<IGpio> gpio) {
     return std::make_unique<ContinuityCollector>(std::move(gpio));
 }
 

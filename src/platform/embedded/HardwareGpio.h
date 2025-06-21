@@ -4,7 +4,10 @@
 #include "../../interface/IGpio.h"
 #include <cstdint>
 
-namespace HAL {
+using namespace Interface;
+
+namespace Platform {
+namespace Embedded {
 
 // 硬件GPIO实现类（用于真实硬件平台）
 // 这是一个模板实现，需要根据具体硬件平台进行适配
@@ -50,6 +53,7 @@ class HardwareGpio : public IGpio {
     void resetAllPins();
 };
 
-} // namespace HAL
+} // namespace Embedded
+} // namespace Platform
 
 #endif // HARDWARE_GPIO_H

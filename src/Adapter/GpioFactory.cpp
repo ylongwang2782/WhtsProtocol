@@ -2,7 +2,7 @@
 #include "../platform/embedded/HardwareGpio.h"
 #include "../platform/windows/VirtualGpio.h"
 
-namespace HAL {
+namespace Adapter {
 
 // 统一的GPIO创建接口 - 根据CMake配置自动选择实现
 std::unique_ptr<IGpio> GpioFactory::createGpio() {
@@ -17,11 +17,11 @@ std::unique_ptr<IGpio> GpioFactory::createGpio() {
 }
 
 std::unique_ptr<IGpio> GpioFactory::createVirtualGpio() {
-    return std::make_unique<VirtualGpio>();
+    return std::make_unique<Platform::Windows::VirtualGpio>();
 }
 
 std::unique_ptr<IGpio> GpioFactory::createHardwareGpio() {
-    return std::make_unique<HardwareGpio>();
+    return std::make_unique<Platform::Embedded::HardwareGpio>();
 }
 
 std::unique_ptr<IGpio> GpioFactory::createGpio(GpioType type) {
@@ -35,4 +35,4 @@ std::unique_ptr<IGpio> GpioFactory::createGpio(GpioType type) {
     }
 }
 
-} // namespace HAL
+} // namespace Adapter

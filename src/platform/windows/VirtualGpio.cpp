@@ -4,7 +4,8 @@
 #include <cstring>
 #include <random>
 
-namespace HAL {
+namespace Platform {
+namespace Windows {
 
 // VirtualGpio实现
 VirtualGpio::VirtualGpio() : simulationCounter_(0) {
@@ -172,4 +173,5 @@ void VirtualGpio::simulateContinuityPattern(uint8_t numPins, uint32_t pattern) {
     }
 }
 
-} // namespace HAL
+} // namespace Windows
+} // namespace Platform

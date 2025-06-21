@@ -4,7 +4,9 @@
 #include "../interface/IGpio.h"
 #include <memory>
 
-namespace HAL {
+using namespace Interface;
+
+namespace Adapter {
 
 // GPIO工厂类
 class GpioFactory {
@@ -25,6 +27,6 @@ class GpioFactory {
     static std::unique_ptr<IGpio> createGpio(GpioType type);
 };
 
-} // namespace HAL
+} // namespace Adapter
 
 #endif // GPIO_FACTORY_H

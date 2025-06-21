@@ -4,8 +4,7 @@
 #include <iostream>
 #include <sstream>
 
-namespace HAL {
-namespace Network {
+namespace App {
 
 NetworkManager::NetworkManager() : isRunning(false) {}
 
@@ -30,15 +29,8 @@ std::string NetworkManager::generateSocketId() {
 }
 
 std::string NetworkManager::createUdpSocket(const std::string &socketId) {
-    if (!socketFactory) {
-        std::cerr << "[ERROR] NetworkManager: Socket factory not initialized"
-                  << std::endl;
-        return "";
-    }
-
     std::string id = socketId.empty() ? generateSocketId() : socketId;
 
-    // 检查ID是否已存在
     if (sockets.find(id) != sockets.end()) {
         std::cerr << "[ERROR] NetworkManager: Socket ID already exists: " << id
                   << std::endl;
@@ -58,16 +50,10 @@ std::string NetworkManager::createUdpSocket(const std::string &socketId) {
         return "";
     }
 
-    // 设置接收回调
-    socket->setReceiveCallback([this, id](const std::vector<uint8_t> &data,
-                                          const NetworkAddress &senderAddr) {
-        handleSocketReceive(id, data, senderAddr);
-    });
-
     sockets[id] = std::move(socket);
-
     std::cout << "[INFO] NetworkManager: Created UDP socket: " << id
               << std::endl;
+
     return id;
 }
 
@@ -171,16 +157,8 @@ bool NetworkManager::closeSocket(const std::string &socketId) {
 
     it->second->close();
     sockets.erase(it);
-
     std::cout << "[INFO] NetworkManager: Closed socket: " << socketId
               << std::endl;
-
-    // 发送套接字关闭事件
-    if (eventCallback) {
-        NetworkEvent event(NetworkEventType::SOCKET_CLOSED, socketId);
-        eventCallback(event);
-    }
-
     return true;
 }
 
@@ -188,7 +166,9 @@ NetworkAddress
 NetworkManager::getSocketLocalAddress(const std::string &socketId) const {
     auto it = sockets.find(socketId);
     if (it == sockets.end()) {
-        return NetworkAddress(); // 返回无效地址
+        std::cerr << "[ERROR] NetworkManager: Socket not found: " << socketId
+                  << std::endl;
+        return NetworkAddress();
     }
 
     return it->second->getLocalAddress();
@@ -209,24 +189,11 @@ void NetworkManager::setEventCallback(NetworkEventCallback callback) {
 
 void NetworkManager::start() {
     isRunning = true;
-
-    // 启动所有套接字的异步接收
-    for (auto &pair : sockets) {
-        pair.second->startAsyncReceive();
-    }
-
-    std::cout << "[INFO] NetworkManager: Started with " << sockets.size()
-              << " sockets" << std::endl;
+    std::cout << "[INFO] NetworkManager: Started" << std::endl;
 }
 
 void NetworkManager::stop() {
     isRunning = false;
-
-    // 停止所有套接字的异步接收
-    for (auto &pair : sockets) {
-        pair.second->stopAsyncReceive();
-    }
-
     std::cout << "[INFO] NetworkManager: Stopped" << std::endl;
 }
 
@@ -235,7 +202,7 @@ void NetworkManager::processEvents() {
         return;
     }
 
-    // 处理所有套接字的事件
+    // Process events for all sockets
     for (auto &pair : sockets) {
         pair.second->processEvents();
     }
@@ -243,20 +210,19 @@ void NetworkManager::processEvents() {
 
 std::vector<std::string> NetworkManager::getSocketIds() const {
     std::vector<std::string> ids;
-    ids.reserve(sockets.size());
-
     for (const auto &pair : sockets) {
         ids.push_back(pair.first);
     }
-
     return ids;
 }
 
 void NetworkManager::cleanup() {
-    stop();
+    for (auto &pair : sockets) {
+        pair.second->close();
+    }
     sockets.clear();
-    socketFactory.reset();
-    std::cout << "[INFO] NetworkManager: Cleaned up" << std::endl;
+    isRunning = false;
+    std::cout << "[INFO] NetworkManager: Cleaned up all sockets" << std::endl;
 }
 
 void NetworkManager::handleSocketReceive(const std::string &socketId,
@@ -282,5 +248,4 @@ void NetworkManager::handleSocketSend(const std::string &socketId, bool success,
     }
 }
 
-} // namespace Network
-} // namespace HAL
+} // namespace App

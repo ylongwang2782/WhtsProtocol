@@ -19,8 +19,10 @@ typedef int socklen_t;
 #define closesocket close
 #endif
 
-namespace HAL {
-namespace Network {
+using namespace Interface;
+
+namespace Platform {
+namespace Windows {
 
 /**
  * Windows平台UDP套接字实现
@@ -82,5 +84,5 @@ class WindowsUdpSocketFactory : public IUdpSocketFactory {
     }
 };
 
-} // namespace Network
-} // namespace HAL
+} // namespace Windows
+} // namespace Platform

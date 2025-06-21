@@ -4,9 +4,10 @@
 #include "../interface/IUdpSocket.h"
 #include <memory>
 
+using namespace Interface;
+using namespace App;
 
-namespace HAL {
-namespace Network {
+namespace Adapter {
 
 /**
  * 平台类型枚举
@@ -62,5 +63,4 @@ class NetworkFactory {
     static bool isPlatformSupported(PlatformType platform);
 };
 
-} // namespace Network
-} // namespace HAL
+} // namespace Adapter

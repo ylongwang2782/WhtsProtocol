@@ -2,14 +2,13 @@
 #include <cstring>
 #include <iostream>
 
-
-namespace HAL {
-namespace Network {
+namespace Platform {
+namespace Embedded {
 
 #ifdef USE_LWIP
 
 LwipUdpSocket::LwipUdpSocket()
-    : udpPcb(nullptr), isInitialized(false), isBound(false) {}
+    : conn(nullptr), isInitialized(false), isBound(false) {}
 
 LwipUdpSocket::~LwipUdpSocket() { close(); }
 
@@ -18,9 +17,9 @@ bool LwipUdpSocket::initialize() {
         return true;
     }
 
-    udpPcb = udp_new();
-    if (udpPcb == nullptr) {
-        std::cerr << "[ERROR] LwipUdpSocket: Failed to create UDP PCB"
+    conn = netconn_new(NETCONN_UDP);
+    if (conn == nullptr) {
+        std::cerr << "[ERROR] LwipUdpSocket: Failed to create UDP connection"
                   << std::endl;
         return false;
     }
@@ -40,23 +39,15 @@ bool LwipUdpSocket::bind(const std::string &address, uint16_t port) {
     if (address.empty()) {
         ip_addr_set_any(IP_IS_V4_VAL(bindAddr), &bindAddr);
     } else {
-        bindAddr = createIpAddr(address);
-        if (ip_addr_isany(&bindAddr) && !address.empty()) {
-            std::cerr << "[ERROR] LwipUdpSocket: Invalid address: " << address
-                      << std::endl;
-            return false;
-        }
+        bindAddr = stringToIpAddr(address);
     }
 
-    err_t err = udp_bind(udpPcb, &bindAddr, port);
+    err_t err = netconn_bind(conn, &bindAddr, port);
     if (err != ERR_OK) {
         std::cerr << "[ERROR] LwipUdpSocket: Bind failed, error: "
                   << static_cast<int>(err) << std::endl;
         return false;
     }
-
-    // 设置接收回调
-    udp_recv(udpPcb, udpReceiveCallback, this);
 
     isBound = true;
     localAddress = NetworkAddress(address.empty() ? "0.0.0.0" : address, port);
@@ -64,79 +55,21 @@ bool LwipUdpSocket::bind(const std::string &address, uint16_t port) {
 }
 
 bool LwipUdpSocket::setBroadcast(bool enable) {
-    if (!isInitialized) {
-        return false;
-    }
-
-    // lwip默认支持广播，这里可以根据需要进行配置
-    // 在某些lwip配置中可能需要设置SO_BROADCAST选项
-    if (enable) {
-        // 启用广播（lwip通常默认启用）
-        udpPcb->so_options |= SOF_BROADCAST;
-    } else {
-        // 禁用广播
-        udpPcb->so_options &= ~SOF_BROADCAST;
-    }
-
+    // LWIP默认支持广播
     return true;
 }
 
 bool LwipUdpSocket::setNonBlocking(bool nonBlocking) {
-    // lwip是事件驱动的，本质上是非阻塞的
-    // 这个方法主要影响receiveFrom的行为
-    return true;
-}
-
-ip_addr_t LwipUdpSocket::createIpAddr(const std::string &ipStr) const {
-    ip_addr_t addr;
-    if (ipaddr_aton(ipStr.c_str(), &addr) == 0) {
-        // 解析失败，返回any地址
-        ip_addr_set_any(IP_IS_V4_VAL(addr), &addr);
-    }
-    return addr;
-}
-
-NetworkAddress LwipUdpSocket::createNetworkAddress(const ip_addr_t *addr,
-                                                   u16_t port) const {
-    char ipStr[IPADDR_STRLEN_MAX];
-    ipaddr_ntoa_r(addr, ipStr, sizeof(ipStr));
-    return NetworkAddress(std::string(ipStr), port);
-}
-
-bool LwipUdpSocket::isValidIpAddress(const std::string &ip) const {
-    ip_addr_t addr;
-    return ipaddr_aton(ip.c_str(), &addr) != 0;
-}
-
-void LwipUdpSocket::udpReceiveCallback(void *arg, struct udp_pcb *pcb,
-                                       struct pbuf *p, const ip_addr_t *addr,
-                                       u16_t port) {
-    LwipUdpSocket *socket = static_cast<LwipUdpSocket *>(arg);
-    if (socket == nullptr || p == nullptr) {
-        if (p != nullptr) {
-            pbuf_free(p);
-        }
-        return;
+    if (!isInitialized) {
+        return false;
     }
 
-    // 提取数据
-    std::vector<uint8_t> data(p->tot_len);
-    pbuf_copy_partial(p, data.data(), p->tot_len, 0);
-
-    // 创建发送方地址
-    NetworkAddress senderAddr = socket->createNetworkAddress(addr, port);
-
-    // 释放pbuf
-    pbuf_free(p);
-
-    // 如果有接收回调，直接调用
-    if (socket->receiveCallback) {
-        socket->receiveCallback(data, senderAddr);
+    if (nonBlocking) {
+        netconn_set_nonblocking(conn, 1);
     } else {
-        // 否则放入队列
-        std::lock_guard<std::mutex> lock(socket->queueMutex);
-        socket->receiveQueue.emplace(data, senderAddr);
+        netconn_set_nonblocking(conn, 0);
     }
+    return true;
 }
 
 bool LwipUdpSocket::sendTo(const std::vector<uint8_t> &data,
@@ -149,26 +82,28 @@ bool LwipUdpSocket::sendTo(const std::vector<uint8_t> &data,
         return false;
     }
 
-    // 创建目标地址
-    ip_addr_t destAddr = createIpAddr(targetAddr.ip);
-
-    // 分配pbuf
-    struct pbuf *p = pbuf_alloc(PBUF_TRANSPORT, data.size(), PBUF_RAM);
-    if (p == nullptr) {
+    ip_addr_t destAddr = stringToIpAddr(targetAddr.ip);
+    struct netbuf *buf = netbuf_new();
+    if (buf == nullptr) {
         if (callback) {
             callback(false, 0);
         }
         return false;
     }
 
-    // 复制数据到pbuf
-    memcpy(p->payload, data.data(), data.size());
+    void *payload = netbuf_alloc(buf, data.size());
+    if (payload == nullptr) {
+        netbuf_delete(buf);
+        if (callback) {
+            callback(false, 0);
+        }
+        return false;
+    }
 
-    // 发送数据
-    err_t err = udp_sendto(udpPcb, p, &destAddr, targetAddr.port);
+    memcpy(payload, data.data(), data.size());
 
-    // 释放pbuf
-    pbuf_free(p);
+    err_t err = netconn_sendto(conn, buf, &destAddr, targetAddr.port);
+    netbuf_delete(buf);
 
     bool success = (err == ERR_OK);
     if (callback) {
@@ -180,7 +115,6 @@ bool LwipUdpSocket::sendTo(const std::vector<uint8_t> &data,
 
 bool LwipUdpSocket::broadcast(const std::vector<uint8_t> &data, uint16_t port,
                               UdpSendCallback callback) {
-    // 使用广播地址
     NetworkAddress broadcastAddr("255.255.255.255", port);
     return sendTo(data, broadcastAddr, callback);
 }
@@ -191,21 +125,28 @@ int LwipUdpSocket::receiveFrom(uint8_t *buffer, size_t bufferSize,
         return -1;
     }
 
-    std::lock_guard<std::mutex> lock(queueMutex);
-    if (receiveQueue.empty()) {
-        return 0; // 没有数据
+    struct netbuf *buf;
+    err_t err = netconn_recv(conn, &buf);
+    if (err != ERR_OK) {
+        return -1;
     }
 
-    // 获取队列中的第一个数据包
-    ReceivedPacket packet = receiveQueue.front();
-    receiveQueue.pop();
+    size_t len = netbuf_len(buf);
+    if (len > bufferSize) {
+        len = bufferSize;
+    }
 
-    // 复制数据到缓冲区
-    size_t copySize = std::min(packet.data.size(), bufferSize);
-    memcpy(buffer, packet.data.data(), copySize);
-    senderAddr = packet.senderAddr;
+    netbuf_copy(buf, buffer, len);
 
-    return static_cast<int>(copySize);
+    // 获取发送方地址
+    ip_addr_t *addr;
+    u16_t port;
+    netbuf_fromaddr(buf, &addr, &port);
+    senderAddr.ip = ipAddrToString(*addr);
+    senderAddr.port = port;
+
+    netbuf_delete(buf);
+    return static_cast<int>(len);
 }
 
 void LwipUdpSocket::setReceiveCallback(UdpReceiveCallback callback) {
@@ -213,52 +154,59 @@ void LwipUdpSocket::setReceiveCallback(UdpReceiveCallback callback) {
 }
 
 void LwipUdpSocket::startAsyncReceive() {
-    // lwip本身就是异步的，接收回调已经在bind时设置
+    // LWIP是事件驱动的，这里可以设置为非阻塞模式
+    setNonBlocking(true);
 }
 
-void LwipUdpSocket::stopAsyncReceive() {
-    // 移除接收回调
-    if (udpPcb != nullptr) {
-        udp_recv(udpPcb, nullptr, nullptr);
-    }
-}
-
-void LwipUdpSocket::processEvents() {
-    // lwip的事件处理通常在主循环中通过sys_check_timeouts()等函数处理
-    // 这里可以处理队列中的数据或其他事件
-    if (receiveCallback) {
-        std::lock_guard<std::mutex> lock(queueMutex);
-        while (!receiveQueue.empty()) {
-            ReceivedPacket packet = receiveQueue.front();
-            receiveQueue.pop();
-            receiveCallback(packet.data, packet.senderAddr);
-        }
-    }
-}
+void LwipUdpSocket::stopAsyncReceive() { setNonBlocking(false); }
 
 void LwipUdpSocket::close() {
-    if (udpPcb != nullptr) {
-        udp_remove(udpPcb);
-        udpPcb = nullptr;
+    if (conn != nullptr) {
+        netconn_close(conn);
+        netconn_delete(conn);
+        conn = nullptr;
     }
-
     isInitialized = false;
     isBound = false;
-
-    // 清空接收队列
-    std::lock_guard<std::mutex> lock(queueMutex);
-    while (!receiveQueue.empty()) {
-        receiveQueue.pop();
-    }
 }
 
 NetworkAddress LwipUdpSocket::getLocalAddress() const { return localAddress; }
 
 bool LwipUdpSocket::isOpen() const {
-    return isInitialized && (udpPcb != nullptr);
+    return isInitialized && (conn != nullptr);
+}
+
+void LwipUdpSocket::processEvents() {
+    if (!isInitialized || !receiveCallback) {
+        return;
+    }
+
+    // 简单的轮询接收
+    uint8_t buffer[1024];
+    NetworkAddress senderAddr;
+    int bytesReceived = receiveFrom(buffer, sizeof(buffer), senderAddr);
+
+    if (bytesReceived > 0) {
+        std::vector<uint8_t> data(buffer, buffer + bytesReceived);
+        receiveCallback(data, senderAddr);
+    }
+}
+
+ip_addr_t LwipUdpSocket::stringToIpAddr(const std::string &ipStr) {
+    ip_addr_t addr;
+    if (ipaddr_aton(ipStr.c_str(), &addr) == 0) {
+        ip_addr_set_any(IP_IS_V4_VAL(addr), &addr);
+    }
+    return addr;
+}
+
+std::string LwipUdpSocket::ipAddrToString(const ip_addr_t &addr) {
+    char ipStr[IPADDR_STRLEN_MAX];
+    ipaddr_ntoa_r(&addr, ipStr, sizeof(ipStr));
+    return std::string(ipStr);
 }
 
 #endif // USE_LWIP
 
-} // namespace Network
-} // namespace HAL
+} // namespace Embedded
+} // namespace Platform

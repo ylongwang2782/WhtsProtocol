@@ -2,8 +2,8 @@
 #include <cstring>
 #include <iostream>
 
-namespace HAL {
-namespace Network {
+namespace Platform {
+namespace Windows {
 
 WindowsUdpSocket::WindowsUdpSocket()
     : sock(INVALID_SOCKET), isInitialized(false), isBound(false),
@@ -203,22 +203,16 @@ int WindowsUdpSocket::receiveFrom(uint8_t *buffer, size_t bufferSize,
                                  static_cast<int>(bufferSize), 0,
                                  (sockaddr *)&senderSockAddr, &senderAddrLen);
 
-    if (bytesReceived > 0) {
-        senderAddr = createNetworkAddress(senderSockAddr);
-    } else if (bytesReceived == SOCKET_ERROR) {
-#ifdef _WIN32
+    if (bytesReceived == SOCKET_ERROR) {
         int error = WSAGetLastError();
-        if (error == WSAEWOULDBLOCK && isNonBlocking) {
-            return 0; // 非阻塞模式下没有数据
+        if (error != WSAEWOULDBLOCK) {
+            std::cerr << "[ERROR] WindowsUdpSocket: Receive failed - Error: "
+                      << error << std::endl;
         }
-#else
-        if (errno == EAGAIN || errno == EWOULDBLOCK) {
-            return 0; // 非阻塞模式下没有数据
-        }
-#endif
-        return -1; // 真正的错误
+        return -1;
     }
 
+    senderAddr = createNetworkAddress(senderSockAddr);
     return bytesReceived;
 }
 
@@ -227,12 +221,14 @@ void WindowsUdpSocket::setReceiveCallback(UdpReceiveCallback callback) {
 }
 
 void WindowsUdpSocket::startAsyncReceive() {
-    // 在Windows Socket API中，我们使用轮询模式
-    // 异步接收需要在processEvents()中处理
+    // Windows原生socket不支持真正的异步接收
+    // 这里只设置非阻塞模式，需要通过processEvents轮询
+    setNonBlocking(true);
 }
 
 void WindowsUdpSocket::stopAsyncReceive() {
-    // 停止异步接收
+    // 停止异步接收，恢复阻塞模式
+    setNonBlocking(false);
 }
 
 void WindowsUdpSocket::processEvents() {
@@ -240,12 +236,11 @@ void WindowsUdpSocket::processEvents() {
         return;
     }
 
-    // 轮询接收数据
-    const size_t BUFFER_SIZE = 1024;
-    uint8_t buffer[BUFFER_SIZE];
+    // 简单的轮询接收
+    uint8_t buffer[4096];
     NetworkAddress senderAddr;
+    int bytesReceived = receiveFrom(buffer, sizeof(buffer), senderAddr);
 
-    int bytesReceived = receiveFrom(buffer, BUFFER_SIZE, senderAddr);
     if (bytesReceived > 0) {
         std::vector<uint8_t> data(buffer, buffer + bytesReceived);
         receiveCallback(data, senderAddr);
@@ -271,5 +266,5 @@ bool WindowsUdpSocket::isOpen() const {
     return isInitialized && (sock != INVALID_SOCKET);
 }
 
-} // namespace Network
-} // namespace HAL
+} // namespace Windows
+} // namespace Platform

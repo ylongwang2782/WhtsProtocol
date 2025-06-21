@@ -14,8 +14,10 @@
 #include <queue>
 #include <thread>
 
-namespace HAL {
-namespace Network {
+using namespace Interface;
+
+namespace Platform {
+namespace Windows {
 
 #ifdef USE_ASIO
 
@@ -156,5 +158,5 @@ class AsioUdpSocketFactory : public IUdpSocketFactory {
 
 #endif // USE_ASIO
 
-} // namespace Network
-} // namespace HAL
+} // namespace Windows
+} // namespace Platform

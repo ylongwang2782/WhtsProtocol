@@ -5,7 +5,7 @@
 #include <thread>
 
 using namespace WhtsProtocol;
-using namespace HAL::Network;
+using namespace Interface;
 
 namespace SlaveApp {
 

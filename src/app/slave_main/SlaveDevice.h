@@ -9,8 +9,9 @@
 #include <memory>
 #include <mutex>
 
-
-using namespace HAL::Network;
+using namespace Adapter;
+using namespace Interface;
+using namespace App;
 
 namespace SlaveApp {
 

@@ -11,7 +11,9 @@
 #include <vector>
 
 using namespace WhtsProtocol;
-using namespace HAL::Network;
+using namespace Adapter;
+using namespace Interface;
+using namespace App;
 
 class MasterServer {
   private:

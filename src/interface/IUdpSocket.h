@@ -6,8 +6,7 @@
 #include <string>
 #include <vector>
 
-namespace HAL {
-namespace Network {
+namespace Interface {
 
 /**
  * 网络地址结构
@@ -156,5 +155,4 @@ class IUdpSocketFactory {
     virtual std::unique_ptr<IUdpSocket> createUdpSocket() = 0;
 };
 
-} // namespace Network
-} // namespace HAL
+} // namespace Interface

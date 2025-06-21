@@ -4,7 +4,10 @@
 #include "../../interface/IGpio.h"
 #include <cstdint>
 
-namespace HAL {
+using namespace Interface;
+
+namespace Platform {
+namespace Windows {
 
 // 虚拟GPIO实现类（用于仿真和测试）
 class VirtualGpio : public IGpio {
@@ -52,6 +55,7 @@ class VirtualGpio : public IGpio {
     void simulateContinuityPattern(uint8_t numPins, uint32_t pattern);
 };
 
-} // namespace HAL
+} // namespace Windows
+} // namespace Platform
 
 #endif // VIRTUAL_GPIO_H

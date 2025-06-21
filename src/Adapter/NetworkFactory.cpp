@@ -4,9 +4,7 @@
 #include "../platform/windows/WindowsUdpSocket.h"
 #include <iostream>
 
-
-namespace HAL {
-namespace Network {
+namespace Adapter {
 
 PlatformType NetworkFactory::getCurrentPlatform() {
 #ifdef USE_LWIP
@@ -34,12 +32,12 @@ NetworkFactory::createUdpSocketFactory(PlatformType platform) {
     switch (platform) {
     case PlatformType::WINDOWS:
     case PlatformType::LINUX:
-        return std::make_unique<WindowsUdpSocketFactory>();
+        return std::make_unique<Platform::Windows::WindowsUdpSocketFactory>();
 
     case PlatformType::WINDOWS_ASIO:
     case PlatformType::LINUX_ASIO:
 #ifdef USE_ASIO
-        return std::make_unique<AsioUdpSocketFactory>();
+        return std::make_unique<Platform::Windows::AsioUdpSocketFactory>();
 #else
         std::cerr << "[ERROR] NetworkFactory: ASIO support not compiled in"
                   << std::endl;
@@ -48,7 +46,7 @@ NetworkFactory::createUdpSocketFactory(PlatformType platform) {
 
     case PlatformType::EMBEDDED:
 #ifdef USE_LWIP
-        return std::make_unique<LwipUdpSocketFactory>();
+        return std::make_unique<Platform::Embedded::LwipUdpSocketFactory>();
 #else
         std::cerr << "[ERROR] NetworkFactory: lwip support not compiled in"
                   << std::endl;
@@ -130,5 +128,4 @@ bool NetworkFactory::isPlatformSupported(PlatformType platform) {
     }
 }
 
-} // namespace Network
-} // namespace HAL
+} // namespace Adapter

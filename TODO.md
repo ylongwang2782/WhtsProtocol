@@ -4,6 +4,7 @@
 
 - [x] 移除slave私有的networkManager，像master一样使用公共网络管理器
 - [x] 彻底删除HAL文件夹及其依赖文件
+- [x] 虽然HAL库文件夹已经被移除了，但曾经在HAL文件夹下的IGpio和Network仍旧还在使用HAL命名空间，interface文件夹下的文件应该统一使用Interface命名空间更合理，并且Network类也应该更名为INetwork
 
 - [x] 为了更好的分层次管理，将Gpio文件夹下的文件按功能粒度迁移，并保证slave_main能够正常编译
 │      Gpio.cpp -> ./src/app/slave_main ✓
