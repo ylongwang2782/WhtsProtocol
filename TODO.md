@@ -35,9 +35,9 @@
         WindowsUdpSocket.cpp -> ./src/platform/windows ✓
         WindowsUdpSocket.h -> ./src/platform/windows ✓
 
-- [ ] 确认一下slave_main中使用的网络库
+- [x] 确认一下slave_main中使用的网络库
 使用的是windows的网络库，还是使用的本工程下./src/app/NetworkManager的接口库。
-如果是使用的windows的网络库，请修改为使用本工程下/src/app/NetworkManage接口库
+如果是使用的windows的网络库，请修改为使用本工程下/src/app/NetworkManager接口库
 
 - [x] 从机程序启动后，新增输入Device ID然后再启动，默认Device ID 为0x00000001
 - [x] 完成从机的数据采集功能。

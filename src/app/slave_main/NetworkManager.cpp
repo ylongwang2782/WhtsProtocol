@@ -2,63 +2,47 @@
 #include "../Logger.h"
 #include <iostream>
 
-#ifdef _WIN32
-#pragma comment(lib, "ws2_32.lib")
-#endif
-
 namespace SlaveApp {
 
 NetworkManager::NetworkManager(uint16_t listenPort, uint32_t deviceId)
-    : port(listenPort), deviceId(deviceId), sock(INVALID_SOCKET) {}
+    : port(listenPort), deviceId(deviceId) {
+
+    // 创建网络管理器
+    networkManager = NetworkFactory::createNetworkManager();
+    if (!networkManager) {
+        throw std::runtime_error("Failed to create network manager");
+    }
+}
 
 NetworkManager::~NetworkManager() {
-    if (sock != INVALID_SOCKET) {
-        closesocket(sock);
+    if (networkManager) {
+        networkManager->cleanup();
     }
-#ifdef _WIN32
-    WSACleanup();
-#endif
 }
 
 bool NetworkManager::initialize() {
-#ifdef _WIN32
-    WSADATA wsaData;
-    if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0) {
-        Log::e("NetworkManager", "WSAStartup failed");
-        return false;
-    }
-#endif
-
-    sock = socket(AF_INET, SOCK_DGRAM, 0);
-    if (sock == INVALID_SOCKET) {
-        Log::e("NetworkManager", "Socket creation failed");
+    // 创建主套接字
+    mainSocketId = networkManager->createUdpSocket("slave_main");
+    if (mainSocketId.empty()) {
+        Log::e("NetworkManager", "Failed to create main UDP socket");
         return false;
     }
 
-    // Enable broadcast reception for the socket (to receive wireless
-    // broadcasts)
-    int broadcast = 1;
-    if (setsockopt(sock, SOL_SOCKET, SO_BROADCAST, (char *)&broadcast,
-                   sizeof(broadcast)) == SOCKET_ERROR) {
+    // 启用广播功能
+    if (!networkManager->setSocketBroadcast(mainSocketId, true)) {
         Log::w("NetworkManager", "Failed to enable broadcast option");
     }
 
-    // Configure server address (Slave listens on port 8081 for broadcasts)
-    serverAddr.sin_family = AF_INET;
-    serverAddr.sin_addr.s_addr =
-        INADDR_ANY; // Listen on all interfaces for broadcasts
-    serverAddr.sin_port = htons(port);
+    // 配置服务器地址 (Slave监听端口8081接收广播)
+    serverAddr = NetworkAddress("0.0.0.0", port);
 
-    // Configure master address (Master uses port 8080)
-    masterAddr.sin_family = AF_INET;
-    masterAddr.sin_addr.s_addr = inet_addr("127.0.0.1"); // localhost
-    masterAddr.sin_port = htons(8080);
+    // 配置主机地址 (Master使用端口8080)
+    masterAddr = NetworkAddress("127.0.0.1", 8080);
 
-    if (bind(sock, (sockaddr *)&serverAddr, sizeof(serverAddr)) ==
-        SOCKET_ERROR) {
-        Log::e("NetworkManager", "Bind failed");
-        closesocket(sock);
-        sock = INVALID_SOCKET;
+    // 绑定套接字
+    if (!networkManager->bindSocket(mainSocketId, serverAddr.ip,
+                                    serverAddr.port)) {
+        Log::e("NetworkManager", "Failed to bind socket");
         return false;
     }
 
@@ -74,39 +58,29 @@ bool NetworkManager::initialize() {
 }
 
 void NetworkManager::setNonBlocking() {
-    if (sock == INVALID_SOCKET) {
-        return;
+    if (!mainSocketId.empty()) {
+        networkManager->setSocketNonBlocking(mainSocketId, true);
     }
-
-#ifdef _WIN32
-    u_long mode = 1; // 1为非阻塞
-    ioctlsocket(sock, FIONBIO, &mode);
-#else
-    int flags = fcntl(sock, F_GETFL, 0);
-    fcntl(sock, F_SETFL, flags | O_NONBLOCK);
-#endif
 }
 
 int NetworkManager::receiveData(char *buffer, size_t bufferSize,
-                                sockaddr_in &senderAddr) {
-    if (sock == INVALID_SOCKET) {
+                                NetworkAddress &senderAddr) {
+    if (mainSocketId.empty()) {
         return -1;
     }
 
-    socklen_t senderAddrLen = sizeof(senderAddr);
-    return recvfrom(sock, buffer, static_cast<int>(bufferSize), 0,
-                    (sockaddr *)&senderAddr, &senderAddrLen);
+    return networkManager->receiveFrom(mainSocketId,
+                                       reinterpret_cast<uint8_t *>(buffer),
+                                       bufferSize, senderAddr);
 }
 
 void NetworkManager::sendResponse(const std::vector<uint8_t> &data) {
-    if (sock == INVALID_SOCKET || data.empty()) {
+    if (mainSocketId.empty() || data.empty()) {
         return;
     }
 
-    // Send response to master on port 8080
-    sendto(sock, reinterpret_cast<const char *>(data.data()),
-           static_cast<int>(data.size()), 0, (sockaddr *)&masterAddr,
-           sizeof(masterAddr));
+    // 发送响应到主机端口8080
+    networkManager->sendTo(mainSocketId, data, masterAddr);
 }
 
 } // namespace SlaveApp

@@ -1,35 +1,26 @@
 #pragma once
 
+#include "../../Adapter/NetworkFactory.h"
+#include "../NetworkManager.h"
 #include "WhtsProtocol.h"
+#include <memory>
 #include <vector>
 
-#ifdef _WIN32
-#include <winsock2.h>
-#include <ws2tcpip.h>
-typedef int socklen_t;
-#else
-#include <arpa/inet.h>
-#include <fcntl.h>
-#include <netinet/in.h>
-#include <sys/socket.h>
-#include <unistd.h>
-#define SOCKET int
-#define INVALID_SOCKET -1
-#define SOCKET_ERROR -1
-#define closesocket close
-#endif
+using namespace HAL::Network;
 
 namespace SlaveApp {
 
 /**
  * 网络管理器类
  * 负责处理UDP套接字通信
+ * 使用项目统一的NetworkManager接口库
  */
 class NetworkManager {
   private:
-    SOCKET sock;
-    sockaddr_in serverAddr;
-    sockaddr_in masterAddr;
+    std::unique_ptr<HAL::Network::NetworkManager> networkManager;
+    std::string mainSocketId;
+    NetworkAddress serverAddr;
+    NetworkAddress masterAddr;
     uint16_t port;
     uint32_t deviceId;
     WhtsProtocol::ProtocolProcessor processor;
@@ -56,7 +47,8 @@ class NetworkManager {
      * @param senderAddr 发送方地址
      * @return 接收到的字节数，-1表示没有数据或错误
      */
-    int receiveData(char *buffer, size_t bufferSize, sockaddr_in &senderAddr);
+    int receiveData(char *buffer, size_t bufferSize,
+                    NetworkAddress &senderAddr);
 
     /**
      * 发送响应数据

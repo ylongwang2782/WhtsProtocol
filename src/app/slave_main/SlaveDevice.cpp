@@ -5,6 +5,7 @@
 #include <thread>
 
 using namespace WhtsProtocol;
+using namespace HAL::Network;
 
 namespace SlaveApp {
 
@@ -37,7 +38,7 @@ bool SlaveDevice::initialize() {
     return true;
 }
 
-void SlaveDevice::processFrame(Frame &frame, const sockaddr_in &senderAddr) {
+void SlaveDevice::processFrame(Frame &frame, const NetworkAddress &senderAddr) {
     Log::i("SlaveDevice",
            "Processing frame - PacketId: 0x%02X, payload size: %zu",
            static_cast<int>(frame.packetId), frame.payload.size());
@@ -113,7 +114,7 @@ void SlaveDevice::run() {
     Log::i("SlaveDevice", "Sending responses to Master on port 8080");
 
     char buffer[1024];
-    sockaddr_in senderAddr;
+    NetworkAddress senderAddr;
 
     auto &processor = networkManager->getProcessor();
 

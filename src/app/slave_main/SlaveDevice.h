@@ -57,7 +57,7 @@ class SlaveDevice {
      * @param senderAddr 发送方地址
      */
     void processFrame(WhtsProtocol::Frame &frame,
-                      const sockaddr_in &senderAddr);
+                      const HAL::Network::NetworkAddress &senderAddr);
 
     /**
      * 运行主循环

@@ -54,7 +54,5 @@ set_target_properties(${SLAVE_TARGET} PROPERTIES
     CXX_STANDARD_REQUIRED ON
 )
 
-# Platform-specific settings
-if(WIN32)
-    target_link_libraries(${SLAVE_TARGET} ws2_32)
-endif()
+# Platform-specific settings are now handled by the NetworkManager interface library
+# No need to directly link ws2_32 as it's handled by the platform-specific implementations
