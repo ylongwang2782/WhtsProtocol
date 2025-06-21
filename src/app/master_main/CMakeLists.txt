@@ -25,7 +25,6 @@ target_include_directories(MasterCore
 target_link_libraries(MasterCore 
     WhtsProtocol
     AppLogger
-    HAL
     Adapter
     Interface
     Platform

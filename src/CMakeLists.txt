@@ -6,9 +6,6 @@ add_subdirectory(interface)
 # Platform-specific implementations
 add_subdirectory(platform)
 
-# HAL module
-add_subdirectory(HAL)
-
 # Adapter module
 add_subdirectory(Adapter)
 

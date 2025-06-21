@@ -40,7 +40,6 @@ target_include_directories(${SLAVE_TARGET}
 target_link_libraries(${SLAVE_TARGET} 
     WhtsProtocol
     AppLogger
-    HAL
     Adapter
     Interface
     Platform
