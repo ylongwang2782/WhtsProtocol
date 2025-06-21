@@ -1,4 +1,5 @@
 #include "NetworkManager.h"
+#include "Logger.h"
 #include <algorithm>
 #include <chrono>
 #include <iostream>
@@ -12,8 +13,7 @@ NetworkManager::~NetworkManager() { cleanup(); }
 
 bool NetworkManager::initialize(std::unique_ptr<IUdpSocketFactory> factory) {
     if (!factory) {
-        std::cerr << "[ERROR] NetworkManager: Invalid socket factory"
-                  << std::endl;
+        Log::e("NetworkManager", "Invalid socket factory");
         return false;
     }
 
@@ -32,21 +32,18 @@ std::string NetworkManager::createUdpSocket(const std::string &socketId) {
     std::string id = socketId.empty() ? generateSocketId() : socketId;
 
     if (sockets.find(id) != sockets.end()) {
-        std::cerr << "[ERROR] NetworkManager: Socket ID already exists: " << id
-                  << std::endl;
+        Log::e("NetworkManager", "Socket ID already exists: " + id);
         return "";
     }
 
     auto socket = socketFactory->createUdpSocket();
     if (!socket) {
-        std::cerr << "[ERROR] NetworkManager: Failed to create UDP socket"
-                  << std::endl;
+        Log::e("NetworkManager", "Failed to create UDP socket");
         return "";
     }
 
     if (!socket->initialize()) {
-        std::cerr << "[ERROR] NetworkManager: Failed to initialize UDP socket"
-                  << std::endl;
+        Log::e("NetworkManager", "Failed to initialize UDP socket");
         return "";
     }
 
@@ -56,8 +53,7 @@ std::string NetworkManager::createUdpSocket(const std::string &socketId) {
     });
 
     sockets[id] = std::move(socket);
-    std::cout << "[INFO] NetworkManager: Created UDP socket: " << id
-              << std::endl;
+    Log::i("NetworkManager", "Created UDP socket: " + id);
 
     return id;
 }
@@ -66,8 +62,7 @@ bool NetworkManager::bindSocket(const std::string &socketId,
                                 const std::string &address, uint16_t port) {
     auto it = sockets.find(socketId);
     if (it == sockets.end()) {
-        std::cerr << "[ERROR] NetworkManager: Socket not found: " << socketId
-                  << std::endl;
+        Log::e("NetworkManager", "Socket not found: " + socketId);
         return false;
     }
 
@@ -75,12 +70,11 @@ bool NetworkManager::bindSocket(const std::string &socketId,
     if (result) {
         it->second->startAsyncReceive();
 
-        std::cout << "[INFO] NetworkManager: Socket " << socketId
-                  << " bound to " << (address.empty() ? "0.0.0.0" : address)
-                  << ":" << port << std::endl;
+        Log::i("NetworkManager", "Socket " + socketId + " bound to " +
+                                     (address.empty() ? "0.0.0.0" : address) +
+                                     ":" + std::to_string(port));
     } else {
-        std::cerr << "[ERROR] NetworkManager: Failed to bind socket "
-                  << socketId << std::endl;
+        Log::e("NetworkManager", "Failed to bind socket " + socketId);
     }
 
     return result;
@@ -90,8 +84,7 @@ bool NetworkManager::setSocketBroadcast(const std::string &socketId,
                                         bool enable) {
     auto it = sockets.find(socketId);
     if (it == sockets.end()) {
-        std::cerr << "[ERROR] NetworkManager: Socket not found: " << socketId
-                  << std::endl;
+        Log::e("NetworkManager", "Socket not found: " + socketId);
         return false;
     }
 
@@ -102,8 +95,7 @@ bool NetworkManager::setSocketNonBlocking(const std::string &socketId,
                                           bool nonBlocking) {
     auto it = sockets.find(socketId);
     if (it == sockets.end()) {
-        std::cerr << "[ERROR] NetworkManager: Socket not found: " << socketId
-                  << std::endl;
+        Log::e("NetworkManager", "Socket not found: " + socketId);
         return false;
     }
 
@@ -115,8 +107,7 @@ bool NetworkManager::sendTo(const std::string &socketId,
                             const NetworkAddress &targetAddr) {
     auto it = sockets.find(socketId);
     if (it == sockets.end()) {
-        std::cerr << "[ERROR] NetworkManager: Socket not found: " << socketId
-                  << std::endl;
+        Log::e("NetworkManager", "Socket not found: " + socketId);
         return false;
     }
 
@@ -131,8 +122,7 @@ bool NetworkManager::broadcast(const std::string &socketId,
                                uint16_t port) {
     auto it = sockets.find(socketId);
     if (it == sockets.end()) {
-        std::cerr << "[ERROR] NetworkManager: Socket not found: " << socketId
-                  << std::endl;
+        Log::e("NetworkManager", "Socket not found: " + socketId);
         return false;
     }
 
@@ -146,8 +136,7 @@ int NetworkManager::receiveFrom(const std::string &socketId, uint8_t *buffer,
                                 size_t bufferSize, NetworkAddress &senderAddr) {
     auto it = sockets.find(socketId);
     if (it == sockets.end()) {
-        std::cerr << "[ERROR] NetworkManager: Socket not found: " << socketId
-                  << std::endl;
+        Log::e("NetworkManager", "Socket not found: " + socketId);
         return -1;
     }
 
@@ -157,8 +146,7 @@ int NetworkManager::receiveFrom(const std::string &socketId, uint8_t *buffer,
 bool NetworkManager::closeSocket(const std::string &socketId) {
     auto it = sockets.find(socketId);
     if (it == sockets.end()) {
-        std::cerr << "[ERROR] NetworkManager: Socket not found: " << socketId
-                  << std::endl;
+        Log::e("NetworkManager", "Socket not found: " + socketId);
         return false;
     }
 
@@ -173,8 +161,7 @@ NetworkAddress
 NetworkManager::getSocketLocalAddress(const std::string &socketId) const {
     auto it = sockets.find(socketId);
     if (it == sockets.end()) {
-        std::cerr << "[ERROR] NetworkManager: Socket not found: " << socketId
-                  << std::endl;
+        Log::e("NetworkManager", "Socket not found: " + socketId);
         return NetworkAddress();
     }
 
@@ -202,12 +189,12 @@ void NetworkManager::start() {
         pair.second->startAsyncReceive();
     }
 
-    std::cout << "[INFO] NetworkManager: Started" << std::endl;
+    Log::i("NetworkManager", "Started");
 }
 
 void NetworkManager::stop() {
     isRunning = false;
-    std::cout << "[INFO] NetworkManager: Stopped" << std::endl;
+    Log::i("NetworkManager", "Stopped");
 }
 
 void NetworkManager::processEvents() {
@@ -235,7 +222,7 @@ void NetworkManager::cleanup() {
     }
     sockets.clear();
     isRunning = false;
-    std::cout << "[INFO] NetworkManager: Cleaned up all sockets" << std::endl;
+    Log::i("NetworkManager", "Cleaned up all sockets");
 }
 
 void NetworkManager::handleSocketReceive(const std::string &socketId,
