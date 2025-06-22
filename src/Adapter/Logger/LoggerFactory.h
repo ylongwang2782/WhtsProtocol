@@ -1,5 +1,5 @@
 #pragma once
-#include "../interface/ILogger.h"
+#include "ILogger.h"
 #include <memory>
 
 /**

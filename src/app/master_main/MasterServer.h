@@ -1,6 +1,6 @@
 #pragma once
 
-#include "../../Adapter/NetworkFactory.h"
+#include "../../Adapter/Network/NetworkFactory.h"
 #include "../NetworkManager.h"
 #include "CommandTracking.h"
 #include "DeviceManager.h"

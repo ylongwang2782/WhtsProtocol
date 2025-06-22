@@ -1,5 +1,5 @@
 #pragma once
-#include "../Adapter/LoggerFactory.h"
+#include "../Adapter/Logger/LoggerFactory.h"
 #include "../interface/ILogger.h"
 #include <string>
 

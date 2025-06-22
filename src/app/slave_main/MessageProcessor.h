@@ -1,6 +1,6 @@
 #pragma once
 
-#include "ContinuityCollector.h"
+#include "../../Adapter/Collector/ContinuityCollector.h"
 #include "SlaveDeviceState.h"
 #include "WhtsProtocol.h"
 #include <memory>

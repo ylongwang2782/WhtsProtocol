@@ -1,8 +1,9 @@
 #pragma once
 
-#include "../app/NetworkManager.h"
-#include "../interface/IUdpSocket.h"
+#include "IUdpSocket.h"
+#include "NetworkManager.h"
 #include <memory>
+
 
 using namespace Interface;
 using namespace App;

@@ -1,8 +1,8 @@
 #pragma once
 
-#include "../../Adapter/NetworkFactory.h"
+#include "../../Adapter/Collector/ContinuityCollector.h"
+#include "../../Adapter/Network/NetworkFactory.h"
 #include "../NetworkManager.h"
-#include "ContinuityCollector.h"
 #include "MessageProcessor.h"
 #include "SlaveDeviceState.h"
 #include "WhtsProtocol.h"
