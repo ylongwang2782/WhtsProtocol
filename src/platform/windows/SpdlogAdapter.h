@@ -3,9 +3,20 @@
 #include <cstdarg>
 #include <memory>
 #include <mutex>
+#include <spdlog/pattern_formatter.h>
 #include <spdlog/sinks/basic_file_sink.h>
 #include <spdlog/sinks/stdout_color_sinks.h>
 #include <spdlog/spdlog.h>
+
+/**
+ * @brief 自定义格式化器，用于显示大写的日志级别
+ */
+class UppercaseLevelFormatter : public spdlog::custom_flag_formatter {
+  public:
+    void format(const spdlog::details::log_msg &msg, const std::tm &,
+                spdlog::memory_buf_t &dest) override;
+    std::unique_ptr<custom_flag_formatter> clone() const override;
+};
 
 /**
  * @brief spdlog实现的日志适配器

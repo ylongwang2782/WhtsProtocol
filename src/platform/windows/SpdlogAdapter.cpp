@@ -3,6 +3,42 @@
 #include <cstdio>
 #include <spdlog/pattern_formatter.h>
 
+// 实现自定义格式化器
+void UppercaseLevelFormatter::format(const spdlog::details::log_msg &msg,
+                                     const std::tm &,
+                                     spdlog::memory_buf_t &dest) {
+    std::string level_name;
+    switch (msg.level) {
+    case spdlog::level::trace:
+        level_name = "TRACE";
+        break;
+    case spdlog::level::debug:
+        level_name = "DEBUG";
+        break;
+    case spdlog::level::info:
+        level_name = "INFO";
+        break;
+    case spdlog::level::warn:
+        level_name = "WARN";
+        break;
+    case spdlog::level::err:
+        level_name = "ERROR";
+        break;
+    case spdlog::level::critical:
+        level_name = "CRITICAL";
+        break;
+    default:
+        level_name = "UNKNOWN";
+        break;
+    }
+    dest.append(level_name.data(), level_name.data() + level_name.size());
+}
+
+std::unique_ptr<spdlog::custom_flag_formatter>
+UppercaseLevelFormatter::clone() const {
+    return spdlog::details::make_unique<UppercaseLevelFormatter>();
+}
+
 SpdlogAdapter::SpdlogAdapter()
     : m_fileLoggingEnabled(false), m_currentLogLevel(LogLevel::VERBOSE) {
     initializeLogger();
@@ -22,6 +58,12 @@ void SpdlogAdapter::initializeLogger() {
     // 设置日志格式：[时间] [级别] [标签] 消息
     m_logger->set_pattern("[%Y-%m-%d %H:%M:%S.%e] [%^%l%$] [%n] %v");
 
+    // 创建自定义格式化器以显示大写的日志级别
+    auto formatter = std::make_unique<spdlog::pattern_formatter>();
+    formatter->add_flag<UppercaseLevelFormatter>('U').set_pattern(
+        "[%Y-%m-%d %H:%M:%S.%e] [%^%U%$] [%n] %v");
+    m_logger->set_formatter(std::move(formatter));
+
     // 设置日志级别
     m_logger->set_level(convertLogLevel(m_currentLogLevel));
 
@@ -38,7 +80,13 @@ void SpdlogAdapter::recreateLogger() {
 
     m_logger = std::make_shared<spdlog::logger>("WhtsProtocol", sinks.begin(),
                                                 sinks.end());
-    m_logger->set_pattern("[%Y-%m-%d %H:%M:%S.%e] [%^%l%$] [%n] %v");
+
+    // 创建自定义格式化器以显示大写的日志级别
+    auto formatter = std::make_unique<spdlog::pattern_formatter>();
+    formatter->add_flag<UppercaseLevelFormatter>('U').set_pattern(
+        "[%Y-%m-%d %H:%M:%S.%e] [%^%U%$] [%n] %v");
+    m_logger->set_formatter(std::move(formatter));
+
     m_logger->set_level(convertLogLevel(m_currentLogLevel));
 
     spdlog::register_logger(m_logger);
